@@ -24,7 +24,12 @@ from .models import (
     SessionSnapshot,
     TranscriptSegment,
 )
-from .recovery import RecoverySource, build_recovered_states, find_recovery_sources
+from .recovery import (
+    RecoverySource,
+    build_recovered_states,
+    find_project_sources,
+    find_recovery_sources,
+)
 from .research import AcademicSearcher, search_transcript
 
 
@@ -45,11 +50,13 @@ class SeminarSession:
         analyzer: DeepSeekAnalyzer,
         external_ai_enabled: bool,
         recovered_sources: list[RecoverySource] | None = None,
+        project_id: str | None = None,
     ) -> None:
         self.started_at = datetime.now()
         stamp = self.started_at.strftime("%Y%m%d-%H%M%S")
         self.id = f"{preset.id}-{stamp}-{uuid.uuid4().hex[:6]}"
         self.preset = preset
+        self.project_id = project_id or preset.id
         self.root = root / self.id
         self.root.mkdir(parents=True, exist_ok=False)
         self.transcriber = transcriber
@@ -525,6 +532,7 @@ class SeminarSession:
     def snapshot(self) -> SessionSnapshot:
         return SessionSnapshot(
             id=self.id,
+            project_id=self.project_id,
             status=self.status,
             preset=self.preset,
             elapsed_seconds=round(self.elapsed_seconds, 2),
@@ -658,6 +666,7 @@ class SeminarSession:
     def _write_manifest(self) -> None:
         payload = {
             "id": self.id,
+            "project_id": self.project_id,
             "preset_id": self.preset.id,
             "status": self.status,
             "sample_rate": SAMPLE_RATE,
@@ -756,6 +765,7 @@ class SessionManager:
         preset = self.presets.get(preset_id)
         if preset is None:
             raise KeyError(preset_id)
+        self._ensure_no_active_project(preset_id)
         now = datetime.now()
         recovered_sources = find_recovery_sources(self.root, preset_id, now)
         session = SeminarSession(
@@ -765,10 +775,49 @@ class SessionManager:
             analyzer=self.analyzer,
             external_ai_enabled=external_ai_enabled,
             recovered_sources=recovered_sources,
+            project_id=preset_id,
         )
         self.sessions[session.id] = session
         session.start_background_loop()
         return session
+
+    def continue_project(
+        self, project_id: str, preset_id: str, external_ai_enabled: bool
+    ) -> SeminarSession:
+        preset = self.presets.get(preset_id)
+        if preset is None:
+            raise KeyError(preset_id)
+        self._ensure_no_active_project(project_id)
+        recovered_sources = find_project_sources(self.root, project_id)
+        if not recovered_sources:
+            raise KeyError(project_id)
+        session = SeminarSession(
+            preset=preset,
+            root=self.root,
+            transcriber=self.transcriber,
+            analyzer=self.analyzer,
+            external_ai_enabled=external_ai_enabled,
+            recovered_sources=recovered_sources,
+            project_id=project_id,
+        )
+        self.sessions[session.id] = session
+        session.start_background_loop()
+        return session
+
+    def active_session_ids(self) -> set[str]:
+        return {
+            session.id
+            for session in self.sessions.values()
+            if session.status in {"recording", "stopping"}
+        }
+
+    def _ensure_no_active_project(self, project_id: str) -> None:
+        if any(
+            session.project_id == project_id
+            and session.status in {"recording", "stopping"}
+            for session in self.sessions.values()
+        ):
+            raise RuntimeError("该项目已有正在进行的录音")
 
     def get(self, session_id: str) -> SeminarSession:
         session = self.sessions.get(session_id)

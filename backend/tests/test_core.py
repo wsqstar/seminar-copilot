@@ -5,11 +5,21 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from app.analyzer import TemporaryQuestionDraft, keyword_hits, quote_is_grounded
+from app.main import _requested_byte_range
 from app.models import QuestionDefinition, SeminarPreset, TranscriptSegment
 from app.presets import load_presets
-from app.recovery import build_recovered_states, find_recovery_sources
-from app.session import SeminarSession, export_filename, format_seconds, slugify
+from app.projects import ProjectStore
+from app.recovery import build_recovered_states, find_project_sources, find_recovery_sources
+from app.session import (
+    SessionManager,
+    SeminarSession,
+    export_filename,
+    format_seconds,
+    slugify,
+)
 from app.research import bibliographic_relevance, search_transcript
 
 
@@ -45,6 +55,13 @@ def test_format_helpers() -> None:
     assert export_filename(
         "2026-09-09", "Jiaxin Shi", datetime(2026, 9, 9, 14, 30, 12)
     ) == "2026-09-09-jiaxin-shi-143012-seminar-live-notes.md"
+
+
+def test_audio_byte_ranges_support_seeking() -> None:
+    assert _requested_byte_range(None, 1_000) == (0, 999)
+    assert _requested_byte_range("bytes=44-143", 1_000) == (44, 143)
+    assert _requested_byte_range("bytes=900-", 1_000) == (900, 999)
+    assert _requested_byte_range("bytes=-100", 1_000) == (900, 999)
 
 
 def test_preset_json_contains_no_api_credentials() -> None:
@@ -186,3 +203,97 @@ def test_temporary_question_is_persisted_before_enrichment(tmp_path: Path) -> No
         session._raw_file.close()
 
     asyncio.run(scenario())
+
+
+def test_project_history_groups_phases_and_persists_notes(tmp_path: Path) -> None:
+    preset = SeminarPreset(
+        id="history-test",
+        title="A complete seminar project",
+        speaker="Speaker",
+        date="2026-09-09",
+        questions=[QuestionDefinition(id="q1", question="Was it answered?")],
+    )
+    session_root = tmp_path / "sessions"
+    session_root.mkdir()
+    starts = [datetime(2026, 9, 9, 14, 0), datetime(2026, 9, 9, 14, 1)]
+    for index, started_at in enumerate(starts):
+        session_id = f"history-test-{started_at:%Y%m%d-%H%M%S}-abc{index}"
+        root = session_root / session_id
+        root.mkdir()
+        (root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": session_id,
+                    "preset_id": "history-test",
+                    "status": "stopped" if index else "recording",
+                    "sample_rate": 16_000,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "audio.pcm").write_bytes(b"\0\0" * 16_000 * 30)
+        (root / "transcript.jsonl").write_text(
+            json.dumps(
+                {
+                    "id": f"seg-{index}",
+                    "start": 2,
+                    "end": 6,
+                    "text": "This directly answers the question." if index else "Introduction",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        if index:
+            (root / "analysis.jsonl").write_text(
+                json.dumps(
+                    {
+                        "updates": [
+                            {
+                                "question_id": "q1",
+                                "status": "answered",
+                                "answer": "Yes.",
+                                "evidence_quote": "This directly answers the question.",
+                                "missing": [],
+                                "confidence": 0.9,
+                            }
+                        ]
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+    store = ProjectStore(session_root, {preset.id: preset})
+    projects = store.list_projects()
+    assert len(projects) == 1
+    assert projects[0].phase_count == 2
+    assert projects[0].audio_seconds == 60
+    assert projects[0].status == "stopped"
+
+    note = store.add_note("history-test", "Remember this limitation.", 35)
+    detail = store.get_project("history-test")
+    assert detail.note_count == 1
+    assert detail.notes[0].id == note.id
+    assert len(detail.transcript) == 2
+    assert detail.transcript[1].start == 62
+    assert detail.questions[0].status == "answered"
+    assert detail.questions[0].answer == "Yes."
+    assert detail.questions[0].evidence[0].start == 62
+    assert len(find_project_sources(session_root, "history-test")) == 2
+
+    async def continue_scenario() -> None:
+        manager = SessionManager.__new__(SessionManager)
+        manager.root = session_root
+        manager.presets = {preset.id: preset}
+        manager.transcriber = object()
+        manager.analyzer = object()
+        manager.sessions = {}
+        continued = manager.continue_project("history-test", preset.id, False)
+        assert continued.project_id == "history-test"
+        assert len(continued.recovered_sessions) == 2
+        with pytest.raises(RuntimeError, match="已有正在进行的录音"):
+            manager.continue_project("history-test", preset.id, False)
+        await continued.stop()
+
+    asyncio.run(continue_scenario())

@@ -22,6 +22,11 @@ and exports an evidence-linked Markdown note.
 - Temporary questions are persisted immediately, rewritten as bilingual spoken
   questions, checked against the full transcript, and optionally supported by
   OpenAlex/Crossref results.
+- Historical project management groups all recording phases for one seminar,
+  exposes audio/transcript/question/note views, and can continue an interrupted
+  or completed project without overwriting prior recordings.
+- Manual notes are append-only project records and can be timestamped from the
+  live recording or added during later review.
 
 ## Deferred
 
@@ -51,6 +56,12 @@ and exports an evidence-linked Markdown note.
 - [done] Temporary-question events are written before asynchronous enrichment;
   local transcript evidence and relevant OpenAlex/Crossref results remain
   distinguished in storage and the UI.
+- [done] Historical project reconstruction, cross-phase question aggregation,
+  append-only notes, continuation source loading, and seekable WAV streaming
+  are covered by backend tests on 2026-09-09.
+- [done] The history UI builds with project selection, four evidence views,
+  explicit microphone selection for continuation, and live timestamped notes
+  on 2026-09-09.
 
 ## Next checkpoint
 

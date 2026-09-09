@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
+  Archive,
   BrainCircuit,
   Check,
+  ChevronLeft,
   Circle,
   Clock3,
   Download,
   FileText,
+  Headphones,
   History,
   Loader2,
   MessageSquarePlus,
   Mic,
+  NotebookPen,
   Pause,
   Play,
+  Plus,
   Radio,
   RefreshCw,
   ShieldCheck,
@@ -24,6 +29,8 @@ import { api } from './api'
 import { listAudioInputs, startAudioCapture, type AudioCapture } from './audio'
 import type {
   Health,
+  ProjectDetail,
+  ProjectSummary,
   QuestionState,
   QuestionStatus,
   SeminarPreset,
@@ -97,11 +104,13 @@ function SetupPanel({
   health,
   presets,
   onStart,
+  onHistory,
   busy,
 }: {
   health: Health | null
   presets: SeminarPreset[]
   onStart: (presetId: string, externalAi: boolean, deviceId: string, demo: boolean) => Promise<void>
+  onHistory: () => Promise<void>
   busy: boolean
 }) {
   const [selected, setSelected] = useState('')
@@ -146,8 +155,11 @@ function SetupPanel({
               ? '本地转录已就绪'
               : health.whisper_state === 'error'
                 ? 'Whisper 预热失败'
-                : 'Whisper 预热中'}
+              : 'Whisper 预热中'}
         </div>
+        <button className="icon-text-button header-history-button" onClick={onHistory} type="button">
+          <Archive size={16} />历史项目
+        </button>
       </header>
 
       <section className="setup-grid">
@@ -232,17 +244,229 @@ function SetupPanel({
   )
 }
 
+type HistoryTab = 'audio' | 'transcript' | 'questions' | 'notes'
+
+const projectStatusLabel = {
+  recording: '录音中',
+  stopped: '已完成',
+  interrupted: '可恢复',
+  empty: '空项目',
+} as const
+
+function HistoryPanel({
+  projects,
+  detail,
+  busy,
+  onBack,
+  onSelect,
+  onContinue,
+  onAddNote,
+}: {
+  projects: ProjectSummary[]
+  detail: ProjectDetail | null
+  busy: boolean
+  onBack: () => void
+  onSelect: (projectId: string) => Promise<void>
+  onContinue: (projectId: string, externalAi: boolean, deviceId: string) => Promise<void>
+  onAddNote: (projectId: string, text: string, audioSecond?: number | null) => Promise<void>
+}) {
+  const [tab, setTab] = useState<HistoryTab>('audio')
+  const [continueOpen, setContinueOpen] = useState(false)
+  const [externalAi, setExternalAi] = useState(true)
+  const [consent, setConsent] = useState(false)
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
+  const [deviceId, setDeviceId] = useState('')
+  const [deviceError, setDeviceError] = useState('')
+  const [noteText, setNoteText] = useState('')
+  const [noteBusy, setNoteBusy] = useState(false)
+
+  useEffect(() => {
+    setTab('audio')
+    setContinueOpen(false)
+    setConsent(false)
+    setNoteText('')
+  }, [detail?.id])
+
+  const inspectMicrophones = async () => {
+    setDeviceError('')
+    try {
+      const permission = await navigator.mediaDevices.getUserMedia({ audio: true })
+      permission.getTracks().forEach((track) => track.stop())
+      const inputs = await listAudioInputs()
+      setDevices(inputs)
+      const builtIn = inputs.find((device) => /MacBook Pro.*麦克风|MacBook Pro.*Microphone/i.test(device.label))
+      setDeviceId((builtIn ?? inputs[0])?.deviceId ?? '')
+    } catch (error) {
+      setDeviceError(error instanceof Error ? error.message : '无法读取麦克风')
+    }
+  }
+
+  const saveNote = async () => {
+    if (!detail || !noteText.trim()) return
+    setNoteBusy(true)
+    try {
+      await onAddNote(detail.id, noteText)
+      setNoteText('')
+    } finally {
+      setNoteBusy(false)
+    }
+  }
+
+  return (
+    <main className="history-shell">
+      <header className="history-header">
+        <button className="icon-button compact" onClick={onBack} title="返回新录音"><ChevronLeft size={18} /></button>
+        <div className="brand-mark"><Archive size={18} /></div>
+        <div><p className="eyebrow">SEMINAR ARCHIVE</p><h1>历史项目</h1></div>
+        <button className="primary-button history-new-button" onClick={onBack}><Plus size={16} />新录音</button>
+      </header>
+
+      <section className="history-layout">
+        <aside className="project-list-pane">
+          <div className="history-pane-title"><span>完整讲座</span><strong>{projects.length}</strong></div>
+          <div className="project-list">
+            {projects.map((project) => (
+              <button
+                className={`project-list-item ${detail?.id === project.id ? 'selected' : ''}`}
+                key={project.id}
+                onClick={() => onSelect(project.id)}
+              >
+                <div><strong>{project.speaker}</strong><span className={`project-status ${project.status}`}>{projectStatusLabel[project.status]}</span></div>
+                <p>{project.title}</p>
+                <small>{project.date} · {project.phase_count} 个阶段 · {formatTime(project.audio_seconds)}</small>
+              </button>
+            ))}
+            {projects.length === 0 && <div className="history-empty"><Archive size={28} /><p>还没有可用的录音项目</p></div>}
+          </div>
+        </aside>
+
+        <section className="project-detail-pane">
+          {!detail ? (
+            <div className="history-empty detail-empty"><Headphones size={34} /><p>{busy ? '正在读取项目…' : '选择一个历史项目'}</p></div>
+          ) : (
+            <>
+              <header className="project-detail-header">
+                <div>
+                  <span>{detail.date} · {detail.speaker}</span>
+                  <h2>{detail.title}</h2>
+                  <p>{detail.phase_count} 个录音阶段 · {formatTime(detail.audio_seconds)} 音频 · {detail.transcript_segments} 段稳定转录</p>
+                </div>
+                <button
+                  className="primary-button"
+                  onClick={() => setContinueOpen((value) => !value)}
+                  disabled={detail.status === 'recording' || busy}
+                ><Mic size={16} />继续录音</button>
+              </header>
+
+              {continueOpen && (
+                <section className="continue-panel">
+                  <div className="continue-fields">
+                    <div>
+                      <label className="field-label" htmlFor="continue-microphone">麦克风</label>
+                      <div className="input-row">
+                        <select id="continue-microphone" value={deviceId} onChange={(event) => setDeviceId(event.target.value)}>
+                          <option value="">先检测并选择麦克风</option>
+                          {devices.map((device, index) => <option value={device.deviceId} key={device.deviceId}>{device.label || `音频输入 ${index + 1}`}</option>)}
+                        </select>
+                        <button className="icon-button" onClick={inspectMicrophones} title="检测麦克风"><RefreshCw size={17} /></button>
+                      </div>
+                    </div>
+                    <label className="toggle-row compact-toggle">
+                      <input type="checkbox" checked={externalAi} onChange={(event) => setExternalAi(event.target.checked)} />
+                      <span className="toggle-control" aria-hidden="true" />
+                      <span><strong>DeepSeek 判断</strong><small>继续使用历史问题状态。</small></span>
+                    </label>
+                  </div>
+                  {deviceError && <p className="inline-error"><AlertCircle size={15} />{deviceError}</p>}
+                  <label className="consent-row compact-consent">
+                    <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
+                    <span><ShieldCheck size={16} />我已确认本次继续录音获得许可，并核对了麦克风。</span>
+                  </label>
+                  <div className="continue-actions">
+                    <button className="secondary-button" onClick={() => setContinueOpen(false)}>取消</button>
+                    <button className="primary-button" disabled={!consent || !deviceId || busy} onClick={() => onContinue(detail.id, externalAi, deviceId)}>
+                      {busy ? <Loader2 className="spin" size={16} /> : <Mic size={16} />}开始新阶段
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              <nav className="history-tabs" aria-label="项目内容">
+                <button className={tab === 'audio' ? 'active' : ''} onClick={() => setTab('audio')}><Headphones size={15} />录音 <span>{detail.phase_count}</span></button>
+                <button className={tab === 'transcript' ? 'active' : ''} onClick={() => setTab('transcript')}><FileText size={15} />转录 <span>{detail.transcript_segments}</span></button>
+                <button className={tab === 'questions' ? 'active' : ''} onClick={() => setTab('questions')}><BrainCircuit size={15} />问题 <span>{detail.questions.length}</span></button>
+                <button className={tab === 'notes' ? 'active' : ''} onClick={() => setTab('notes')}><NotebookPen size={15} />笔记 <span>{detail.note_count}</span></button>
+              </nav>
+
+              <div className="project-detail-content">
+                {tab === 'audio' && detail.phases.map((phase, index) => (
+                  <article className="phase-row" key={phase.session_id}>
+                    <div className="phase-index">{String(index + 1).padStart(2, '0')}</div>
+                    <div className="phase-main">
+                      <div><strong>录音阶段 {index + 1}</strong><span className={`project-status ${phase.status}`}>{projectStatusLabel[phase.status]}</span></div>
+                      <p>{new Date(phase.started_at).toLocaleString('zh-CN')} · {formatTime(phase.audio_seconds)} · {phase.transcript_segments} 段转录 · {phase.analysis_runs} 次 AI 判断</p>
+                      {phase.audio_url && <audio controls preload="none" src={phase.audio_url} />}
+                      {phase.gap_after_seconds > 0 && <small>到下一阶段间隔 {formatTime(phase.gap_after_seconds)}</small>}
+                      {phase.overlap_after_seconds > 0 && <small className="phase-overlap">与下一阶段重叠 {formatTime(phase.overlap_after_seconds)}，转录按实际开始时间对齐</small>}
+                    </div>
+                  </article>
+                ))}
+
+                {tab === 'transcript' && (
+                  <div className="history-transcript">
+                    {detail.transcript.map((segment) => (
+                      <div className="transcript-segment" key={`${segment.session_id}-${segment.start}`}>
+                        <time>{formatTime(segment.start)}</time><p>{segment.text}</p>
+                      </div>
+                    ))}
+                    {detail.transcript.length === 0 && <div className="history-empty"><FileText size={28} /><p>没有稳定转录</p></div>}
+                  </div>
+                )}
+
+                {tab === 'questions' && (
+                  <div className="history-questions">
+                    {detail.questions.map((question) => <QuestionCard key={question.id} question={question} currentSessionId={detail.phases.at(-1)?.session_id ?? ''} />)}
+                  </div>
+                )}
+
+                {tab === 'notes' && (
+                  <div className="notes-workspace">
+                    <div className="note-composer-inline">
+                      <textarea value={noteText} onChange={(event) => setNoteText(event.target.value)} rows={3} placeholder="记录需要核验的数字、方法疑问或会后行动…" />
+                      <button className="primary-button" disabled={!noteText.trim() || noteBusy} onClick={saveNote}>{noteBusy ? <Loader2 className="spin" size={16} /> : <NotebookPen size={16} />}保存笔记</button>
+                    </div>
+                    <div className="note-list">
+                      {[...detail.notes].reverse().map((note) => (
+                        <article key={note.id}><time>{new Date(note.created_at).toLocaleString('zh-CN')}{note.audio_second != null ? ` · ${formatTime(note.audio_second)}` : ''}</time><p>{note.text}</p></article>
+                      ))}
+                      {detail.notes.length === 0 && <div className="history-empty"><NotebookPen size={28} /><p>还没有人工笔记</p></div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+      </section>
+    </main>
+  )
+}
+
 function LiveWorkbench({
   snapshot,
   onStop,
   onAnalyze,
   onExport,
+  onHistory,
+  onAddNote,
   busy,
 }: {
   snapshot: SessionSnapshot
   onStop: () => Promise<void>
   onAnalyze: () => Promise<void>
   onExport: () => Promise<void>
+  onHistory: () => Promise<void>
+  onAddNote: (text: string, audioSecond: number) => Promise<void>
   busy: boolean
 }) {
   const transcriptEnd = useRef<HTMLDivElement>(null)
@@ -251,6 +475,10 @@ function LiveWorkbench({
   const [searchExternal, setSearchExternal] = useState(true)
   const [questionBusy, setQuestionBusy] = useState(false)
   const [composerError, setComposerError] = useState('')
+  const [noteComposerOpen, setNoteComposerOpen] = useState(false)
+  const [noteText, setNoteText] = useState('')
+  const [noteBusy, setNoteBusy] = useState(false)
+  const [noteSaved, setNoteSaved] = useState('')
   const counts = useMemo(() => {
     return snapshot.questions.reduce<Record<QuestionStatus, number>>(
       (result, question) => ({ ...result, [question.status]: result[question.status] + 1 }),
@@ -283,6 +511,23 @@ function LiveWorkbench({
     }
   }
 
+  const submitNote = async () => {
+    if (!noteText.trim()) return
+    setNoteBusy(true)
+    setComposerError('')
+    try {
+      const audioSecond = timelineOffset + snapshot.elapsed_seconds
+      await onAddNote(noteText.trim(), audioSecond)
+      setNoteText('')
+      setNoteComposerOpen(false)
+      setNoteSaved(`笔记已保存到项目时间 ${formatTime(audioSecond)}`)
+    } catch (reason) {
+      setComposerError(reason instanceof Error ? reason.message : '笔记保存失败')
+    } finally {
+      setNoteBusy(false)
+    }
+  }
+
   return (
     <main className="workbench-shell">
       <header className="live-header">
@@ -300,6 +545,11 @@ function LiveWorkbench({
               <MessageSquarePlus size={17} />临时问题
             </button>
           )}
+          {!isStopped && (
+            <button className="icon-text-button" onClick={() => setNoteComposerOpen(true)} title="记录人工笔记">
+              <NotebookPen size={17} />笔记
+            </button>
+          )}
           {snapshot.external_ai_enabled && !isStopped && (
             <button className="icon-text-button" onClick={onAnalyze} disabled={busy} title="立即分析最近 120 秒">
               <BrainCircuit size={17} />立即判断
@@ -309,11 +559,14 @@ function LiveWorkbench({
             <button className="stop-button" onClick={onStop} disabled={busy}>
               {busy ? <Loader2 className="spin" size={17} /> : <Pause size={17} />}结束录音
             </button>
-          ) : (
+          ) : (<>
+            <button className="icon-text-button" onClick={onHistory} disabled={busy}>
+              <Archive size={17} />历史项目
+            </button>
             <button className="primary-button export-button" onClick={onExport} disabled={busy}>
               <Download size={17} />导出到 Obsidian
             </button>
-          )}
+          </>)}
         </div>
       </header>
 
@@ -331,6 +584,7 @@ function LiveWorkbench({
 
       {snapshot.last_error && <div className="error-banner"><AlertCircle size={17} />{snapshot.last_error}</div>}
       {snapshot.export_path && <div className="success-banner"><Check size={17} />已导出：{snapshot.export_path}</div>}
+      {noteSaved && <div className="success-banner"><Check size={17} />{noteSaved}</div>}
       {recovered.length > 0 && (
         <div className="recovery-banner">
           <History size={17} />
@@ -371,6 +625,32 @@ function LiveWorkbench({
         </div>
       )}
 
+      {noteComposerOpen && (
+        <div className="composer-backdrop" role="presentation">
+          <section className="question-composer" role="dialog" aria-modal="true" aria-labelledby="note-composer-title">
+            <div className="composer-heading">
+              <div><NotebookPen size={18} /><h2 id="note-composer-title">现场笔记</h2></div>
+              <button className="icon-button compact" onClick={() => setNoteComposerOpen(false)} title="关闭"><X size={17} /></button>
+            </div>
+            <p>笔记会绑定当前项目时间 {formatTime(timelineOffset + snapshot.elapsed_seconds)}，并与录音、转录和问题一起保留。</p>
+            <textarea
+              value={noteText}
+              onChange={(event) => setNoteText(event.target.value)}
+              placeholder="记录需要核验的数字、方法疑问或会后行动…"
+              rows={4}
+              autoFocus
+            />
+            {composerError && <p className="inline-error"><AlertCircle size={15} />{composerError}</p>}
+            <div className="composer-actions">
+              <button className="secondary-button" onClick={() => setNoteComposerOpen(false)}>取消</button>
+              <button className="primary-button" onClick={submitNote} disabled={!noteText.trim() || noteBusy}>
+                {noteBusy ? <Loader2 className="spin" size={17} /> : <NotebookPen size={17} />}保存笔记
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       <section className="workbench-grid">
         <div className="transcript-pane">
           <div className="pane-heading">
@@ -392,6 +672,9 @@ function LiveWorkbench({
                 ))}
                 {phase.gap_after_seconds > 0 && (
                   <div className="timeline-gap">录音重启缺口约 {formatTime(phase.gap_after_seconds)}</div>
+                )}
+                {phase.overlap_after_seconds > 0 && (
+                  <div className="timeline-overlap">与下一录音阶段重叠约 {formatTime(phase.overlap_after_seconds)}，均保留供核验</div>
                 )}
               </div>
             ))}
@@ -441,6 +724,9 @@ export default function App() {
   const [capture, setCapture] = useState<AudioCapture | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [screen, setScreen] = useState<'setup' | 'history'>('setup')
+  const [projects, setProjects] = useState<ProjectSummary[]>([])
+  const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null)
 
   useEffect(() => {
     const refreshHealth = () => api.health()
@@ -460,6 +746,7 @@ export default function App() {
     let created: SessionSnapshot | null = null
     try {
       created = await api.start(presetId, externalAi)
+      setScreen('setup')
       setSnapshot(created)
       if (demo) {
         setSnapshot(await api.demo(created.id))
@@ -518,9 +805,88 @@ export default function App() {
     }
   }
 
-  if (!snapshot) {
-    return <><SetupPanel health={health} presets={presets} onStart={start} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
+  const selectProject = async (projectId: string) => {
+    setBusy(true)
+    setError('')
+    try {
+      setProjectDetail(await api.project(projectId))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '历史项目读取失败')
+    } finally {
+      setBusy(false)
+    }
   }
 
-  return <><LiveWorkbench snapshot={snapshot} onStop={stop} onAnalyze={analyze} onExport={exportNotes} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
+  const openHistory = async () => {
+    if (snapshot && snapshot.status !== 'stopped') {
+      setError('录音期间不能切换到历史项目；请先结束录音。')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      const rows = await api.projects()
+      setProjects(rows)
+      setScreen('history')
+      setSnapshot(null)
+      if (rows.length > 0) setProjectDetail(await api.project(rows[0].id))
+      else setProjectDetail(null)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '历史项目读取失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const continueProject = async (projectId: string, externalAi: boolean, deviceId: string) => {
+    setBusy(true)
+    setError('')
+    let created: SessionSnapshot | null = null
+    try {
+      created = await api.continueProject(projectId, externalAi)
+      setSnapshot(created)
+      setScreen('setup')
+      const audio = await startAudioCapture(created.id, deviceId, setSnapshot, setError)
+      setCapture(audio)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '继续录音失败')
+      if (created) await api.stop(created.id).catch(() => undefined)
+      setSnapshot(null)
+      setScreen('history')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const addProjectNote = async (projectId: string, text: string, audioSecond?: number | null) => {
+    await api.addProjectNote(projectId, text, audioSecond)
+    if (screen === 'history' && projectDetail?.id === projectId) {
+      const [rows, refreshed] = await Promise.all([api.projects(), api.project(projectId)])
+      setProjects(rows)
+      setProjectDetail(refreshed)
+    }
+  }
+
+  const addLiveNote = async (text: string, audioSecond: number) => {
+    if (!snapshot) throw new Error('当前没有录音项目')
+    await addProjectNote(snapshot.project_id, text, audioSecond)
+  }
+
+  if (!snapshot && screen === 'history') {
+    return <><HistoryPanel
+      projects={projects}
+      detail={projectDetail}
+      busy={busy}
+      onBack={() => { setScreen('setup'); setProjectDetail(null) }}
+      onSelect={selectProject}
+      onContinue={continueProject}
+      onAddNote={addProjectNote}
+    />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
+  }
+
+  if (!snapshot) {
+    return <><SetupPanel health={health} presets={presets} onStart={start} onHistory={openHistory} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
+  }
+
+  return <><LiveWorkbench snapshot={snapshot} onStop={stop} onAnalyze={analyze} onExport={exportNotes} onHistory={openHistory} onAddNote={addLiveNote} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
 }

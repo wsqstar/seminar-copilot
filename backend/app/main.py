@@ -2,25 +2,38 @@ from __future__ import annotations
 
 import asyncio
 import os
+import struct
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Iterator
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from .models import (
+    ContinueProjectRequest,
     ExportResponse,
+    ProjectDetail,
+    ProjectNote,
+    ProjectNoteRequest,
+    ProjectSummary,
     SeminarPreset,
     SessionSnapshot,
     StartSessionRequest,
     TemporaryQuestionRequest,
 )
 from .presets import load_presets
+from .projects import ProjectStore
 from .session import SessionManager
 
 
 presets = load_presets()
 manager = SessionManager(presets)
+
+
+def project_store() -> ProjectStore:
+    return ProjectStore(manager.root, presets, manager.active_session_ids())
 
 
 @asynccontextmanager
@@ -59,6 +72,135 @@ def get_presets() -> list[SeminarPreset]:
     return list(presets.values())
 
 
+@app.get("/api/projects", response_model=list[ProjectSummary])
+def get_projects() -> list[ProjectSummary]:
+    return project_store().list_projects()
+
+
+@app.get("/api/projects/{project_id}", response_model=ProjectDetail)
+def get_project(project_id: str) -> ProjectDetail:
+    try:
+        return project_store().get_project(project_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到历史项目") from None
+
+
+@app.post("/api/projects/{project_id}/continue", response_model=SessionSnapshot)
+async def continue_project(
+    project_id: str, request: ContinueProjectRequest
+) -> SessionSnapshot:
+    if not request.recording_permission_confirmed:
+        raise HTTPException(status_code=400, detail="请先确认已获录音许可")
+    store = project_store()
+    try:
+        preset_id = store.resolve_preset_id(project_id)
+        session = manager.continue_project(
+            project_id, preset_id, request.external_ai_enabled
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到历史项目") from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return session.snapshot()
+
+
+@app.post("/api/projects/{project_id}/notes", response_model=ProjectNote)
+def add_project_note(project_id: str, request: ProjectNoteRequest) -> ProjectNote:
+    try:
+        return project_store().add_note(
+            project_id, request.text, request.audio_second
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到历史项目") from None
+
+
+@app.get("/api/projects/{project_id}/sessions/{session_id}/audio.wav")
+def get_project_audio(
+    project_id: str, session_id: str, request: Request
+) -> StreamingResponse:
+    try:
+        pcm_path, sample_rate = project_store().session_audio_path(
+            project_id, session_id
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到录音阶段") from None
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="该阶段没有可播放音频") from None
+
+    pcm_bytes = pcm_path.stat().st_size
+    byte_rate = sample_rate * 2
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + pcm_bytes,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        1,
+        sample_rate,
+        byte_rate,
+        2,
+        16,
+        b"data",
+        pcm_bytes,
+    )
+
+    total_bytes = 44 + pcm_bytes
+    start, end = _requested_byte_range(request.headers.get("range"), total_bytes)
+
+    def stream() -> Iterator[bytes]:
+        if start < 44:
+            yield header[start : min(end + 1, 44)]
+        pcm_start = max(0, start - 44)
+        pcm_end = end - 44
+        if pcm_end < 0:
+            return
+        remaining = pcm_end - pcm_start + 1
+        with pcm_path.open("rb") as source:
+            source.seek(pcm_start)
+            while remaining > 0:
+                chunk = source.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    partial = start > 0 or end < total_bytes - 1
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(end - start + 1),
+        "Content-Disposition": f'inline; filename="{session_id}.wav"',
+    }
+    if partial:
+        headers["Content-Range"] = f"bytes {start}-{end}/{total_bytes}"
+
+    return StreamingResponse(
+        stream(),
+        media_type="audio/wav",
+        status_code=206 if partial else 200,
+        headers=headers,
+    )
+
+
+def _requested_byte_range(value: str | None, total_bytes: int) -> tuple[int, int]:
+    if not value or not value.startswith("bytes="):
+        return 0, total_bytes - 1
+    raw = value.removeprefix("bytes=").split(",", 1)[0].strip()
+    try:
+        start_text, end_text = raw.split("-", 1)
+        if not start_text:
+            length = min(total_bytes, int(end_text))
+            return total_bytes - length, total_bytes - 1
+        start = int(start_text)
+        end = min(total_bytes - 1, int(end_text)) if end_text else total_bytes - 1
+        if start < 0 or start > end or start >= total_bytes:
+            raise ValueError
+        return start, end
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=416, detail="无效的音频字节范围") from None
+
+
 @app.post("/api/sessions", response_model=SessionSnapshot)
 async def create_session(request: StartSessionRequest) -> SessionSnapshot:
     if not request.recording_permission_confirmed:
@@ -67,6 +209,8 @@ async def create_session(request: StartSessionRequest) -> SessionSnapshot:
         session = manager.create(request.preset_id, request.external_ai_enabled)
     except KeyError:
         raise HTTPException(status_code=404, detail="未找到讲座预设") from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     return session.snapshot()
 
 

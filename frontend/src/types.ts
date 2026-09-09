@@ -67,6 +67,7 @@ export interface ResearchSource {
 
 export interface SessionSnapshot {
   id: string
+  project_id: string
   status: 'recording' | 'stopping' | 'stopped' | 'error'
   preset: SeminarPreset
   elapsed_seconds: number
@@ -90,6 +91,7 @@ export interface RecoveredSessionState {
   audio_seconds: number
   timeline_offset_seconds: number
   gap_after_seconds: number
+  overlap_after_seconds: number
   transcript: TranscriptSegment[]
   ai_analysis_runs: number
 }
@@ -101,4 +103,58 @@ export interface Health {
   whisper_error: string
   demo_enabled: boolean
   preset_count: number
+}
+
+export type ProjectStatus = 'recording' | 'stopped' | 'interrupted' | 'empty'
+
+export interface ProjectSummary {
+  id: string
+  preset_id: string
+  title: string
+  speaker: string
+  date: string
+  status: ProjectStatus
+  phase_count: number
+  audio_seconds: number
+  transcript_segments: number
+  analysis_runs: number
+  temporary_questions: number
+  note_count: number
+  updated_at: string
+}
+
+export interface ProjectPhase {
+  session_id: string
+  started_at: string
+  status: ProjectStatus
+  audio_seconds: number
+  timeline_offset_seconds: number
+  gap_after_seconds: number
+  overlap_after_seconds: number
+  transcript_segments: number
+  analysis_runs: number
+  temporary_questions: number
+  has_audio: boolean
+  audio_url?: string | null
+}
+
+export interface HistoricalTranscriptSegment {
+  session_id: string
+  start: number
+  end: number
+  text: string
+}
+
+export interface ProjectNote {
+  id: string
+  text: string
+  created_at: string
+  audio_second?: number | null
+}
+
+export interface ProjectDetail extends ProjectSummary {
+  phases: ProjectPhase[]
+  transcript: HistoricalTranscriptSegment[]
+  questions: QuestionState[]
+  notes: ProjectNote[]
 }

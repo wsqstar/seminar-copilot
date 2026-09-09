@@ -33,6 +33,11 @@ class StartSessionRequest(BaseModel):
     recording_permission_confirmed: bool
 
 
+class ContinueProjectRequest(BaseModel):
+    external_ai_enabled: bool = False
+    recording_permission_confirmed: bool
+
+
 class Evidence(BaseModel):
     segment_id: str
     start: float
@@ -91,12 +96,14 @@ class RecoveredSessionState(BaseModel):
     audio_seconds: float
     timeline_offset_seconds: float
     gap_after_seconds: float = 0.0
+    overlap_after_seconds: float = 0.0
     transcript: list[TranscriptSegment] = Field(default_factory=list)
     ai_analysis_runs: int = 0
 
 
 class SessionSnapshot(BaseModel):
     id: str
+    project_id: str
     status: Literal["recording", "stopping", "stopped", "error"]
     preset: SeminarPreset
     elapsed_seconds: float
@@ -116,3 +123,60 @@ class SessionSnapshot(BaseModel):
 
 class ExportResponse(BaseModel):
     path: str
+
+
+class ProjectNoteRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+    audio_second: float | None = Field(default=None, ge=0.0)
+
+
+class ProjectNote(BaseModel):
+    id: str
+    text: str
+    created_at: str
+    audio_second: float | None = None
+
+
+class ProjectPhase(BaseModel):
+    session_id: str
+    started_at: str
+    status: Literal["recording", "stopped", "interrupted", "empty"]
+    audio_seconds: float
+    timeline_offset_seconds: float
+    gap_after_seconds: float = 0.0
+    overlap_after_seconds: float = 0.0
+    transcript_segments: int = 0
+    analysis_runs: int = 0
+    temporary_questions: int = 0
+    has_audio: bool = False
+    audio_url: str | None = None
+
+
+class HistoricalTranscriptSegment(BaseModel):
+    session_id: str
+    start: float
+    end: float
+    text: str
+
+
+class ProjectSummary(BaseModel):
+    id: str
+    preset_id: str
+    title: str
+    speaker: str
+    date: str
+    status: Literal["recording", "stopped", "interrupted", "empty"]
+    phase_count: int
+    audio_seconds: float
+    transcript_segments: int
+    analysis_runs: int
+    temporary_questions: int
+    note_count: int
+    updated_at: str
+
+
+class ProjectDetail(ProjectSummary):
+    phases: list[ProjectPhase]
+    transcript: list[HistoricalTranscriptSegment]
+    questions: list[QuestionState]
+    notes: list[ProjectNote]

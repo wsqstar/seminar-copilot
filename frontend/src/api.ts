@@ -1,4 +1,4 @@
-import type { Health, SeminarPreset, SessionSnapshot } from './types'
+import type { Health, ProjectDetail, ProjectNote, ProjectSummary, SeminarPreset, SessionSnapshot } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -15,6 +15,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<Health>('/api/health'),
   presets: () => request<SeminarPreset[]>('/api/presets'),
+  projects: () => request<ProjectSummary[]>('/api/projects'),
+  project: (projectId: string) => request<ProjectDetail>(`/api/projects/${projectId}`),
   start: (presetId: string, externalAiEnabled: boolean) =>
     request<SessionSnapshot>('/api/sessions', {
       method: 'POST',
@@ -32,6 +34,19 @@ export const api = {
     request<SessionSnapshot>(`/api/sessions/${sessionId}/temporary-questions`, {
       method: 'POST',
       body: JSON.stringify({ draft, search_external: searchExternal }),
+    }),
+  continueProject: (projectId: string, externalAiEnabled: boolean) =>
+    request<SessionSnapshot>(`/api/projects/${projectId}/continue`, {
+      method: 'POST',
+      body: JSON.stringify({
+        external_ai_enabled: externalAiEnabled,
+        recording_permission_confirmed: true,
+      }),
+    }),
+  addProjectNote: (projectId: string, text: string, audioSecond?: number | null) =>
+    request<ProjectNote>(`/api/projects/${projectId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify({ text, audio_second: audioSecond ?? null }),
     }),
   demo: (sessionId: string) =>
     request<SessionSnapshot>(`/api/sessions/${sessionId}/demo`, { method: 'POST', body: '{}' }),

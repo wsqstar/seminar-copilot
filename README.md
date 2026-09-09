@@ -62,11 +62,30 @@ For a room lecture, select the laptop microphone. For an online meeting, select
 a legal system-audio loopback input such as a preconfigured BlackHole device;
 the browser cannot capture speaker output through the microphone API alone.
 
+## Historical projects and continued recording
+
+Open `历史项目` from the setup screen to revisit each complete seminar. A
+project groups every recording phase for the same seminar preset and presents:
+
+- playable local audio for each phase, including byte-range seeking;
+- one combined transcript timeline with restart gaps kept explicit;
+- the best persisted AI and local answer judgment for each prepared or
+  temporary question;
+- timestamped manual notes stored with the project.
+
+`继续录音` creates a new phase in the selected project and restores the earlier
+transcript and question state into the live workbench. It never overwrites an
+earlier audio file. The microphone must be detected and explicitly selected
+again before continuation, which prevents silently falling back to the wrong
+input device.
+
 ## Privacy boundary
 
 - Recording and Whisper transcription stay local.
 - Raw audio and session state are stored under `data/sessions/` by default and
   are ignored by Git.
+- Project notes are append-only JSONL under `data/projects/<project-id>/` and
+  are also ignored by Git.
 - DeepSeek analysis is off by default. Enabling it sends only the rolling
   stable transcript and question state to the configured model provider.
 - The app suggests questions but never sends messages or plays speech on the

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .models import RecoveredSessionState, TranscriptSegment
+from .projects import load_session_records
 
 
 SESSION_TIME = re.compile(r"-(\d{8}-\d{6})-[a-z0-9]+$")
@@ -114,12 +115,48 @@ def find_recovery_sources(
     return chain
 
 
+def find_project_sources(
+    root: Path,
+    project_id: str,
+    *,
+    exclude_session_ids: set[str] | None = None,
+) -> list[RecoverySource]:
+    excluded = exclude_session_ids or set()
+    sources: list[RecoverySource] = []
+    for record in load_session_records(root):
+        if record.project_id != project_id or record.session_id in excluded:
+            continue
+        if record.audio_seconds < 8 or not record.transcript_rows:
+            continue
+        try:
+            transcript = [
+                TranscriptSegment.model_validate(row) for row in record.transcript_rows
+            ]
+        except Exception:
+            continue
+        sources.append(
+            RecoverySource(
+                root=record.root,
+                session_id=record.session_id,
+                started_at=record.started_at,
+                audio_seconds=record.audio_seconds,
+                transcript=transcript,
+                analysis_rows=record.analysis_rows,
+                temporary_question_rows=record.temporary_question_rows,
+            )
+        )
+    return sources
+
+
 def build_recovered_states(
     sources: list[RecoverySource], current_started_at: datetime
 ) -> tuple[list[RecoveredSessionState], float]:
+    if not sources:
+        return [], 0.0
     states: list[RecoveredSessionState] = []
-    offset = 0.0
+    project_started_at = sources[0].started_at
     for index, source in enumerate(sources):
+        offset = max(0.0, (source.started_at - project_started_at).total_seconds())
         next_start = (
             sources[index + 1].started_at
             if index + 1 < len(sources)
@@ -127,6 +164,7 @@ def build_recovered_states(
         )
         source_end = source.started_at + timedelta(seconds=source.audio_seconds)
         gap = max(0.0, (next_start - source_end).total_seconds())
+        overlap = max(0.0, (source_end - next_start).total_seconds())
         states.append(
             RecoveredSessionState(
                 session_id=source.session_id,
@@ -134,9 +172,12 @@ def build_recovered_states(
                 audio_seconds=round(source.audio_seconds, 3),
                 timeline_offset_seconds=round(offset, 3),
                 gap_after_seconds=round(gap, 3),
+                overlap_after_seconds=round(overlap, 3),
                 transcript=source.transcript,
                 ai_analysis_runs=len(source.analysis_rows),
             )
         )
-        offset += source.audio_seconds + gap
-    return states, round(offset, 3)
+    current_offset = max(
+        0.0, (current_started_at - project_started_at).total_seconds()
+    )
+    return states, round(current_offset, 3)
