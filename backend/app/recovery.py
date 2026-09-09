@@ -20,6 +20,7 @@ class RecoverySource:
     audio_seconds: float
     transcript: list[TranscriptSegment]
     analysis_rows: list[dict]
+    temporary_question_rows: list[dict]
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -88,6 +89,9 @@ def find_recovery_sources(
                 audio_seconds=audio_seconds,
                 transcript=transcript,
                 analysis_rows=_read_jsonl(session_root / "analysis.jsonl"),
+                temporary_question_rows=_read_jsonl(
+                    session_root / "temporary_questions.jsonl"
+                ),
             )
         )
 

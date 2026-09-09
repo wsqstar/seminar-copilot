@@ -41,11 +41,28 @@ export interface QuestionState {
   question: string
   why_it_matters: string
   expected_slots: string[]
+  keywords?: string[]
   status: QuestionStatus
   answer: string
   missing: string[]
   confidence: number
   evidence: Evidence[]
+  question_en?: string
+  temporary?: boolean
+  created_at_audio_second?: number | null
+  research_status?: 'not_requested' | 'pending' | 'complete' | 'limited' | 'error'
+  research_summary?: string
+  research_sources?: ResearchSource[]
+}
+
+export interface ResearchSource {
+  source_type: 'transcript' | 'openalex' | 'crossref'
+  title: string
+  url?: string | null
+  authors: string[]
+  year?: number | null
+  snippet: string
+  confidence: number
 }
 
 export interface SessionSnapshot {

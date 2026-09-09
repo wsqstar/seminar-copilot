@@ -8,7 +8,13 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from .models import ExportResponse, SeminarPreset, SessionSnapshot, StartSessionRequest
+from .models import (
+    ExportResponse,
+    SeminarPreset,
+    SessionSnapshot,
+    StartSessionRequest,
+    TemporaryQuestionRequest,
+)
 from .presets import load_presets
 from .session import SessionManager
 
@@ -81,6 +87,21 @@ async def analyze_now(session_id: str) -> SessionSnapshot:
     if not session.external_ai_enabled:
         raise HTTPException(status_code=400, detail="当前会话未开启 DeepSeek 分析")
     await session.deep_analyze()
+    return session.snapshot()
+
+
+@app.post("/api/sessions/{session_id}/temporary-questions", response_model=SessionSnapshot)
+async def add_temporary_question(
+    session_id: str, request: TemporaryQuestionRequest
+) -> SessionSnapshot:
+    try:
+        session = manager.get(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="未找到录音会话") from None
+    if session.status != "recording":
+        raise HTTPException(status_code=409, detail="录音结束后不能新增现场问题")
+    session.add_temporary_question(request.draft, request.search_external)
+    await session.broadcast()
     return session.snapshot()
 
 

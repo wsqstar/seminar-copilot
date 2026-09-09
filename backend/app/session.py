@@ -17,6 +17,7 @@ from .analyzer import STATUS_ORDER, DeepSeekAnalyzer, keyword_hits, quote_is_gro
 from .asr import WhisperTranscriber
 from .models import (
     Evidence,
+    QuestionDefinition,
     QuestionState,
     RecoveredSessionState,
     SeminarPreset,
@@ -24,6 +25,7 @@ from .models import (
     TranscriptSegment,
 )
 from .recovery import RecoverySource, build_recovered_states, find_recovery_sources
+from .research import AcademicSearcher, search_transcript
 
 
 SAMPLE_RATE = 16_000
@@ -70,6 +72,7 @@ class SeminarSession:
                 question=q.question,
                 why_it_matters=q.why_it_matters,
                 expected_slots=q.expected_slots,
+                keywords=q.keywords,
                 missing=list(q.expected_slots),
             )
             for q in preset.questions
@@ -89,7 +92,10 @@ class SeminarSession:
         self._raw_path = self.root / "audio.pcm"
         self._transcript_path = self.root / "transcript.jsonl"
         self._analysis_path = self.root / "analysis.jsonl"
+        self._temporary_questions_path = self.root / "temporary_questions.jsonl"
         self._raw_file = self._raw_path.open("ab", buffering=0)
+        self._question_tasks: set[asyncio.Task[Any]] = set()
+        self._restore_temporary_questions(sources)
         self._seed_recovered_state(sources)
         self._write_manifest()
 
@@ -203,7 +209,15 @@ class SeminarSession:
     ) -> None:
         definitions = {item.id: item for item in self.preset.questions}
         for state in self.questions:
-            hits = keyword_hits(definitions[state.id], segment.text)
+            definition = definitions.get(state.id)
+            if definition is None:
+                definition = QuestionDefinition(
+                    id=state.id,
+                    question=state.question,
+                    keywords=state.keywords,
+                    expected_slots=state.expected_slots,
+                )
+            hits = keyword_hits(definition, segment.text)
             if not hits:
                 continue
             evidence = Evidence(
@@ -266,6 +280,163 @@ class SeminarSession:
         finally:
             self._ai_busy = False
             await self.broadcast()
+
+    def add_temporary_question(self, draft: str, search_external: bool) -> QuestionState:
+        clean_draft = draft.strip()
+        question_id = f"temp-{datetime.now():%H%M%S}-{uuid.uuid4().hex[:4]}"
+        state = QuestionState(
+            id=question_id,
+            question=clean_draft or "正在根据讲座内容形成问题…",
+            question_en=clean_draft if clean_draft and clean_draft.isascii() else "",
+            temporary=True,
+            created_at_audio_second=round(
+                self.timeline_offset_seconds + self.elapsed_seconds, 2
+            ),
+            missing=["双语问题", "讲座证据", "外部学术依据"],
+            research_status="pending",
+            research_summary="正在检索讲座记录并整理学术依据。",
+        )
+        self.questions.append(state)
+        self._append_jsonl(
+            self._temporary_questions_path,
+            {
+                "event": "created",
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "question": state.model_dump(),
+                "draft": clean_draft,
+                "search_external": search_external,
+            },
+        )
+        task = asyncio.create_task(
+            self._enrich_temporary_question(state, clean_draft, search_external)
+        )
+        self._question_tasks.add(task)
+        task.add_done_callback(self._question_tasks.discard)
+        return state
+
+    async def _enrich_temporary_question(
+        self, state: QuestionState, draft: str, search_external: bool
+    ) -> None:
+        try:
+            all_segments = self._all_transcript_segments()
+            prompt_segments = all_segments[-80:]
+            transcript_text = "\n".join(
+                f"[{format_seconds(offset + segment.start)}] {segment.text}"
+                for segment, offset in prompt_segments
+            )
+            formulated = await self.analyzer.formulate_temporary_question(
+                draft, transcript_text, self.questions, str(self.root)
+            )
+            state.question = formulated.question_zh
+            state.question_en = formulated.question_en
+            state.why_it_matters = formulated.why_it_matters
+            state.expected_slots = formulated.expected_slots
+            state.keywords = formulated.keywords
+            state.missing = list(formulated.expected_slots)
+            local_sources = search_transcript(
+                f"{state.question} {state.question_en}",
+                formulated.keywords,
+                all_segments,
+            )
+            external_sources = []
+            search_notes: list[str] = []
+            if search_external:
+                outcome = await asyncio.to_thread(
+                    AcademicSearcher().search, formulated.search_query_en
+                )
+                external_sources = outcome.sources
+                search_notes = outcome.notes
+            state.research_sources = [*local_sources, *external_sources]
+            if local_sources:
+                state.research_summary = (
+                    "讲座中已有相关内容；问题已加入持续回答检测。"
+                )
+            elif external_sources:
+                state.research_summary = (
+                    "讲座尚未直接回答；已找到可核验的相关学术作品供现场提问参考。"
+                )
+            else:
+                state.research_summary = (
+                    "讲座尚未直接回答，外部检索暂未返回可核验结果。"
+                )
+            state.research_status = (
+                "complete" if state.research_sources else "limited"
+            )
+            if search_notes:
+                state.research_summary += " " + "；".join(search_notes)
+            definition = QuestionDefinition(
+                id=state.id,
+                question=state.question,
+                keywords=formulated.keywords,
+                expected_slots=state.expected_slots,
+            )
+            for segment, offset in all_segments:
+                hits = keyword_hits(definition, segment.text)
+                if hits:
+                    self._apply_temporary_match(state, segment, offset, hits)
+            self._append_jsonl(
+                self._temporary_questions_path,
+                {
+                    "event": "enriched",
+                    "at": datetime.now().isoformat(timespec="seconds"),
+                    "question": state.model_dump(),
+                    "search_query": formulated.search_query_en,
+                },
+            )
+        except Exception as exc:
+            state.research_status = "error"
+            state.research_summary = f"问题已保存，但自动整理暂时失败：{exc}"
+            self._append_jsonl(
+                self._temporary_questions_path,
+                {
+                    "event": "error",
+                    "at": datetime.now().isoformat(timespec="seconds"),
+                    "question_id": state.id,
+                    "error": str(exc),
+                },
+            )
+        finally:
+            await self.broadcast()
+
+    def _all_transcript_segments(self) -> list[tuple[TranscriptSegment, float]]:
+        segments: list[tuple[TranscriptSegment, float]] = []
+        for phase in self.recovered_sessions:
+            segments.extend(
+                (segment, phase.timeline_offset_seconds)
+                for segment in phase.transcript
+            )
+        segments.extend(
+            (segment, self.timeline_offset_seconds) for segment in self.transcript
+        )
+        return segments
+
+    def _apply_temporary_match(
+        self,
+        state: QuestionState,
+        segment: TranscriptSegment,
+        offset: float,
+        hits: list[str],
+    ) -> None:
+        if all(item.segment_id != segment.id for item in state.evidence):
+            state.evidence.append(
+                Evidence(
+                    segment_id=segment.id,
+                    start=round(offset + segment.start, 2),
+                    end=round(offset + segment.end, 2),
+                    quote=segment.text,
+                    relation="keyword_match",
+                    confidence=min(0.7, 0.35 + 0.08 * len(hits)),
+                    source_session=(
+                        self.id
+                        if offset == self.timeline_offset_seconds
+                        else "recovered"
+                    ),
+                )
+            )
+            state.evidence = state.evidence[-5:]
+        if state.status == "unanswered":
+            state.status = "mention"
+            state.confidence = state.evidence[-1].confidence
 
     def _apply_deep_updates(
         self,
@@ -417,6 +588,28 @@ class SeminarSession:
                     f"- 仍缺：{'；'.join(question.missing) if question.missing else '无'}",
                 ]
             )
+            if question.question_en:
+                lines.append(f"- English: {question.question_en}")
+            if question.temporary:
+                lines.extend(
+                    [
+                        f"- 临时问题创建时间：{format_seconds(question.created_at_audio_second or 0)}",
+                        f"- 检索状态：`{question.research_status}`",
+                        f"- 检索摘要：{question.research_summary or '无'}",
+                    ]
+                )
+                for source in question.research_sources:
+                    label = (
+                        f"{source.title} ({source.year})"
+                        if source.year
+                        else source.title
+                    )
+                    if source.url:
+                        lines.append(
+                            f"- 参考来源 [{source.source_type}]：[{label}]({source.url})"
+                        )
+                    else:
+                        lines.append(f"- 讲座证据：{source.snippet}")
             for evidence in question.evidence:
                 lines.append(
                     f"- 证据 [{format_seconds(evidence.start)}-{format_seconds(evidence.end)}]：{evidence.quote}"
@@ -473,6 +666,9 @@ class SeminarSession:
             "export_path": self.export_path,
             "recovered_session_ids": [item.session_id for item in self.recovered_sessions],
             "timeline_offset_seconds": self.timeline_offset_seconds,
+            "temporary_question_count": sum(
+                1 for item in self.questions if item.temporary
+            ),
         }
         (self.root / "manifest.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -514,6 +710,36 @@ class SeminarSession:
                 followups = row.get("followups", [])
                 if isinstance(followups, list) and followups:
                     self.followups = [str(item) for item in followups if str(item).strip()]
+
+    def _restore_temporary_questions(self, sources: list[RecoverySource]) -> None:
+        restored: dict[str, QuestionState] = {}
+        pending_inputs: dict[str, tuple[str, bool]] = {}
+        for source in sources:
+            for row in source.temporary_question_rows:
+                payload = row.get("question")
+                if not isinstance(payload, dict):
+                    continue
+                try:
+                    question = QuestionState.model_validate(payload)
+                except Exception:
+                    continue
+                if question.temporary:
+                    restored[question.id] = question
+                    if row.get("event") == "created":
+                        pending_inputs[question.id] = (
+                            str(row.get("draft") or ""),
+                            bool(row.get("search_external", True)),
+                        )
+        self.questions.extend(restored.values())
+        for question in restored.values():
+            if question.research_status != "pending":
+                continue
+            draft, search_external = pending_inputs.get(question.id, (question.question, True))
+            task = asyncio.create_task(
+                self._enrich_temporary_question(question, draft, search_external)
+            )
+            self._question_tasks.add(task)
+            task.add_done_callback(self._question_tasks.discard)
 
 
 class SessionManager:

@@ -19,18 +19,23 @@ and exports an evidence-linked Markdown note.
 - Session WAV, JSONL transcript, question state, and Markdown export.
 - Crash recovery discovers recent same-preset orphan sessions, rebuilds prior
   question judgments, and presents a continuous timeline with explicit gaps.
+- Temporary questions are persisted immediately, rewritten as bilingual spoken
+  questions, checked against the full transcript, and optionally supported by
+  OpenAlex/Crossref results.
 
 ## Deferred
 
 - Speaker diarization: unnecessary for the single-speaker lecture MVP.
-- Automatic web research: too slow and difficult to audit during a talk.
+- Broad web research: live retrieval is intentionally limited to auditable
+  OpenAlex/Crossref bibliographic candidates.
 - Automatic dossier edits: live ASR is provisional and requires review.
 - Automatic spoken or chat questions: external communication remains manual.
 
 ## Verified state
 
 - [done] Backend tests pass without loading Metal or contacting an external
-  model: five tests on 2026-09-09.
+  model: temporary-question persistence, full-transcript search, and source
+  relevance filtering are covered on 2026-09-09.
 - [done] Frontend production build succeeds on 2026-09-09.
 - [done] Playwright smoke test covers preset loading, demo state, stop/export,
   console errors, horizontal overflow at 1440 px and 390 px, and a fake-device
@@ -43,6 +48,9 @@ and exports an evidence-linked Markdown note.
 - [done] A restart-recovery path preserves prior transcript and AI JSONL,
   prevents question-state downgrades, and includes recovered phases in web and
   Markdown output.
+- [done] Temporary-question events are written before asynchronous enrichment;
+  local transcript evidence and relevant OpenAlex/Crossref results remain
+  distinguished in storage and the UI.
 
 ## Next checkpoint
 

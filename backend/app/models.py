@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 QuestionStatus = Literal["unanswered", "mention", "partial", "answered"]
+ResearchStatus = Literal["not_requested", "pending", "complete", "limited", "error"]
 
 
 class QuestionDefinition(BaseModel):
@@ -42,16 +43,38 @@ class Evidence(BaseModel):
     source_session: str | None = None
 
 
+class ResearchSource(BaseModel):
+    source_type: Literal["transcript", "openalex", "crossref"]
+    title: str
+    url: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    snippet: str = ""
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
 class QuestionState(BaseModel):
     id: str
     question: str
     why_it_matters: str = ""
     expected_slots: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
     status: QuestionStatus = "unanswered"
     answer: str = ""
     missing: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence: list[Evidence] = Field(default_factory=list)
+    question_en: str = ""
+    temporary: bool = False
+    created_at_audio_second: float | None = None
+    research_status: ResearchStatus = "not_requested"
+    research_summary: str = ""
+    research_sources: list[ResearchSource] = Field(default_factory=list)
+
+
+class TemporaryQuestionRequest(BaseModel):
+    draft: str = Field(default="", max_length=1000)
+    search_external: bool = True
 
 
 class TranscriptSegment(BaseModel):

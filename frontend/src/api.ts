@@ -28,6 +28,11 @@ export const api = {
     request<SessionSnapshot>(`/api/sessions/${sessionId}/stop`, { method: 'POST', body: '{}' }),
   analyze: (sessionId: string) =>
     request<SessionSnapshot>(`/api/sessions/${sessionId}/analyze`, { method: 'POST', body: '{}' }),
+  addTemporaryQuestion: (sessionId: string, draft: string, searchExternal: boolean) =>
+    request<SessionSnapshot>(`/api/sessions/${sessionId}/temporary-questions`, {
+      method: 'POST',
+      body: JSON.stringify({ draft, search_external: searchExternal }),
+    }),
   demo: (sessionId: string) =>
     request<SessionSnapshot>(`/api/sessions/${sessionId}/demo`, { method: 'POST', body: '{}' }),
   export: (sessionId: string) =>

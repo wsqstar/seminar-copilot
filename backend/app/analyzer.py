@@ -35,6 +35,16 @@ class DeepAnalysisResult:
     raw: str
 
 
+@dataclass(frozen=True)
+class TemporaryQuestionDraft:
+    question_zh: str
+    question_en: str
+    why_it_matters: str
+    keywords: list[str]
+    expected_slots: list[str]
+    search_query_en: str
+
+
 class DeepSeekAnalyzer:
     def __init__(self) -> None:
         self.binary = os.environ.get("SEMINAR_DSH_BIN") or shutil.which("dsh") or "dsh"
@@ -80,6 +90,77 @@ class DeepSeekAnalyzer:
             raw=raw,
         )
 
+    async def formulate_temporary_question(
+        self,
+        draft: str,
+        transcript: str,
+        questions: list[QuestionState],
+        cwd: str,
+    ) -> TemporaryQuestionDraft:
+        unresolved = [
+            {"question": item.question, "status": item.status, "missing": item.missing}
+            for item in questions
+            if item.status != "answered"
+        ]
+        prompt = (
+            "You help a researcher ask one precise, evidence-aware question during an academic seminar. "
+            "Do not use tools and do not invent facts. Preserve the user's intent when a draft is supplied. "
+            "If the draft is empty, identify one consequential gap not already duplicated by the unresolved questions. "
+            "The Chinese and English questions must be natural equivalents, concise enough to ask aloud, and include "
+            "the comparison, mechanism, identification boundary, or evidence needed to answer them. "
+            "Return exactly one JSON object without markdown with schema: "
+            '{"question_zh":"...","question_en":"...","why_it_matters":"...",'
+            '"keywords":["..."],"expected_slots":["..."],"search_query_en":"..."}. '
+            "Use 3-8 keywords and 2-5 expected answer slots. Make search_query_en a compact "
+            "bibliographic query with 5-10 discriminative terms, not a full sentence and not a list "
+            "of generic academic words.\n\n"
+            f"USER DRAFT:\n{draft or '(none)'}\n\n"
+            f"UNRESOLVED QUESTIONS:\n{json.dumps(unresolved, ensure_ascii=False)}\n\n"
+            f"RECENT TRANSCRIPT:\n{transcript[-12000:]}"
+        )
+        env = os.environ.copy()
+        env["DSH_PERMISSION_MODE"] = "read-only"
+        process = await asyncio.create_subprocess_exec(
+            self.binary,
+            "--profile",
+            "headless",
+            prompt,
+            cwd=cwd,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=75)
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+            raise RuntimeError("Question formulation exceeded 75 seconds") from None
+        if process.returncode != 0:
+            message = stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(message or f"dsh exited with {process.returncode}")
+        payload = self._parse_json(stdout.decode("utf-8", errors="replace").strip())
+        question_zh = str(payload.get("question_zh") or draft).strip()
+        question_en = str(payload.get("question_en") or draft).strip()
+        if not question_zh or not question_en:
+            raise RuntimeError("DeepSeek returned an incomplete bilingual question")
+        return TemporaryQuestionDraft(
+            question_zh=question_zh,
+            question_en=question_en,
+            why_it_matters=str(payload.get("why_it_matters") or "").strip(),
+            keywords=[
+                str(item).strip()
+                for item in payload.get("keywords", [])
+                if str(item).strip()
+            ][:8],
+            expected_slots=[
+                str(item).strip()
+                for item in payload.get("expected_slots", [])
+                if str(item).strip()
+            ][:5],
+            search_query_en=str(payload.get("search_query_en") or question_en).strip(),
+        )
+
     @staticmethod
     def _parse_json(raw: str) -> dict:
         cleaned = raw.strip()
@@ -101,6 +182,7 @@ class DeepSeekAnalyzer:
                 "id": question.id,
                 "question": question.question,
                 "expected_slots": question.expected_slots,
+                "keywords": question.keywords,
                 "current_status": question.status,
                 "current_missing": question.missing,
             }

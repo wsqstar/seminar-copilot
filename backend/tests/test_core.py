@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app.analyzer import keyword_hits, quote_is_grounded
-from app.models import QuestionDefinition, SeminarPreset
+from app.analyzer import TemporaryQuestionDraft, keyword_hits, quote_is_grounded
+from app.models import QuestionDefinition, SeminarPreset, TranscriptSegment
 from app.presets import load_presets
 from app.recovery import build_recovered_states, find_recovery_sources
 from app.session import SeminarSession, export_filename, format_seconds, slugify
+from app.research import bibliographic_relevance, search_transcript
 
 
 def test_preset_is_loadable_and_has_question_slots() -> None:
@@ -107,3 +109,80 @@ def test_deep_updates_never_downgrade_an_existing_answer(tmp_path: Path) -> None
     assert session.questions[0].status == "answered"
     assert session.questions[0].answer == "Grounded earlier answer"
     session._raw_file.close()
+
+
+def test_transcript_search_returns_timestamped_evidence() -> None:
+    segments = [
+        (
+            TranscriptSegment(
+                id="seg-1",
+                start=12,
+                end=18,
+                text="We compare siblings from the same family to control early-life conditions.",
+            ),
+            100,
+        )
+    ]
+    results = search_transcript(
+        "How does the sibling comparison work?",
+        ["siblings", "early-life conditions"],
+        segments,
+    )
+    assert results[0].source_type == "transcript"
+    assert results[0].title == "讲座转录 01:52"
+
+
+def test_bibliographic_relevance_rejects_generic_topic_noise() -> None:
+    query = "multiple migration residence history exposure misclassification mortality"
+    assert bibliographic_relevance(
+        query, "Multiple migration and residence histories in mortality research"
+    ) > 0.7
+    assert bibliographic_relevance(
+        query, "The evolving use of administrative health data"
+    ) < 0.7
+
+
+def test_temporary_question_is_persisted_before_enrichment(tmp_path: Path) -> None:
+    class FakeAnalyzer:
+        async def formulate_temporary_question(self, *_: object) -> TemporaryQuestionDraft:
+            return TemporaryQuestionDraft(
+                question_zh="兄弟姐妹比较仍有哪些选择偏差？",
+                question_en="What selection bias remains in the sibling comparison?",
+                why_it_matters="Clarifies the identification boundary.",
+                keywords=["sibling", "selection bias"],
+                expected_slots=["remaining selection", "model boundary"],
+                search_query_en="sibling fixed effects migration selection bias longevity",
+            )
+
+    async def scenario() -> None:
+        preset = SeminarPreset(
+            id="temporary-test",
+            title="Test",
+            speaker="Speaker",
+            date="2026-09-09",
+            questions=[],
+        )
+        session = SeminarSession(
+            preset, tmp_path, object(), FakeAnalyzer(), False  # type: ignore[arg-type]
+        )
+        session.transcript.append(
+            TranscriptSegment(
+                id="seg-1",
+                start=1,
+                end=5,
+                text="We compare siblings but individual selection can remain.",
+            )
+        )
+        state = session.add_temporary_question("selection bias?", False)
+        first_row = json.loads(
+            session._temporary_questions_path.read_text(encoding="utf-8").splitlines()[0]
+        )
+        assert first_row["event"] == "created"
+        assert first_row["question"]["id"] == state.id
+        await asyncio.gather(*list(session._question_tasks))
+        assert state.question_en.startswith("What selection bias")
+        assert state.research_status == "complete"
+        assert len(session._temporary_questions_path.read_text(encoding="utf-8").splitlines()) == 2
+        session._raw_file.close()
+
+    asyncio.run(scenario())

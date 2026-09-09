@@ -10,6 +10,12 @@ if [[ -f "$ROOT_DIR/.env.local" ]]; then
   set +a
 fi
 
+if [[ -n "${SEMINAR_CREDENTIAL_ENV:-}" && -f "$SEMINAR_CREDENTIAL_ENV" ]]; then
+  set -a
+  source "$SEMINAR_CREDENTIAL_ENV"
+  set +a
+fi
+
 cleanup() {
   kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
 }

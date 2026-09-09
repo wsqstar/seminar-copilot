@@ -82,10 +82,31 @@ SEMINAR_PREWARM_WHISPER=1
 SEMINAR_DSH_BIN=/opt/homebrew/bin/dsh
 SEMINAR_OBSIDIAN_EXPORT_DIR=/absolute/path/to/obsidian/folder
 SEMINAR_ENABLE_DEMO=1
+SEMINAR_CREDENTIAL_ENV=/absolute/path/to/private-credentials.env
 ```
 
 `.env.local` is ignored by Git so local paths and service configuration remain
 on the machine.
+
+## Live temporary questions
+
+During recording, use `临时问题` to save a rough question or ask the assistant
+to identify a missing question. The request is persisted before enrichment,
+then processed asynchronously:
+
+1. Rewrite it as equivalent Chinese and English spoken questions.
+2. Search the complete recovered/current transcript for prior answers while
+   keeping the AI formulation prompt bounded to recent context.
+3. Optionally search OpenAlex and Crossref for citable academic context.
+4. Add the question to the same rolling answer-coverage analysis as preset
+   questions.
+
+The live card separates timestamped lecture evidence from external literature
+candidates. No result is preferable to showing a weak bibliographic match.
+Question lifecycle events and sourced results are written to
+`temporary_questions.jsonl` in the session directory. Markdown export includes
+the bilingual wording, creation timestamp, search status, sources, and later
+answer evidence. Google Scholar is not scraped.
 
 ## Checks
 

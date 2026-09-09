@@ -7,7 +7,9 @@ import {
   Clock3,
   Download,
   FileText,
+  History,
   Loader2,
+  MessageSquarePlus,
   Mic,
   Pause,
   Play,
@@ -15,7 +17,8 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
-  History,
+  Search,
+  X,
 } from 'lucide-react'
 import { api } from './api'
 import { listAudioInputs, startAudioCapture, type AudioCapture } from './audio'
@@ -39,9 +42,11 @@ function formatTime(seconds: number): string {
   return `${String(Math.floor(whole / 60)).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}`
 }
 
-function QuestionCard({ question }: { question: QuestionState }) {
+function QuestionCard({ question, currentSessionId }: { question: QuestionState; currentSessionId: string }) {
   const meta = statusMeta[question.status]
   const evidence = question.evidence.at(-1)
+  const transcriptSources = (question.research_sources ?? []).filter((source) => source.source_type === 'transcript')
+  const academicSources = (question.research_sources ?? []).filter((source) => source.source_type !== 'transcript')
   return (
     <article className={`question-card ${meta.className}`}>
       <div className="question-heading">
@@ -49,10 +54,12 @@ function QuestionCard({ question }: { question: QuestionState }) {
         <h3>{question.question}</h3>
         <span className="status-label">{meta.label}</span>
       </div>
+      {question.temporary && <span className="temporary-badge">现场临时问题</span>}
+      {question.question_en && <p className="question-en">{question.question_en}</p>}
       {question.answer && <p className="answer-text">{question.answer}</p>}
       {evidence && (
         <blockquote>
-          <time>{formatTime(evidence.start)}{evidence.source_session && <small>合并</small>}</time>
+          <time>{formatTime(evidence.start)}{evidence.source_session && evidence.source_session !== currentSessionId && <small>合并</small>}</time>
           <span>{evidence.quote}</span>
         </blockquote>
       )}
@@ -60,6 +67,22 @@ function QuestionCard({ question }: { question: QuestionState }) {
         <div className="missing-row">
           <span>仍缺</span>
           <p>{question.missing.join('；')}</p>
+        </div>
+      )}
+      {question.temporary && question.research_status && (
+        <div className={`research-box research-${question.research_status}`}>
+          <div><Search size={13} /><strong>{question.research_status === 'pending' ? '正在检索' : '问题依据'}</strong></div>
+          <p>{question.research_summary}</p>
+          {transcriptSources.length > 0 && <small className="source-group-label">讲座证据</small>}
+          {transcriptSources.slice(0, 2).map((source, index) => (
+            <span key={`transcript-${index}`}>{source.title} · {source.snippet}</span>
+          ))}
+          {academicSources.length > 0 && <small className="source-group-label">外部文献候选</small>}
+          {academicSources.slice(0, 3).map((source, index) => (
+            source.url
+              ? <a href={source.url} target="_blank" rel="noreferrer" key={`${source.source_type}-${index}`}>{source.title}{source.year ? ` · ${source.year}` : ''}</a>
+              : <span key={`${source.source_type}-${index}`}>{source.title}</span>
+          ))}
         </div>
       )}
       <div className="question-footer">
@@ -223,6 +246,11 @@ function LiveWorkbench({
   busy: boolean
 }) {
   const transcriptEnd = useRef<HTMLDivElement>(null)
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [questionDraft, setQuestionDraft] = useState('')
+  const [searchExternal, setSearchExternal] = useState(true)
+  const [questionBusy, setQuestionBusy] = useState(false)
+  const [composerError, setComposerError] = useState('')
   const counts = useMemo(() => {
     return snapshot.questions.reduce<Record<QuestionStatus, number>>(
       (result, question) => ({ ...result, [question.status]: result[question.status] + 1 }),
@@ -241,6 +269,20 @@ function LiveWorkbench({
   const recoveredAudio = recovered.reduce((total, item) => total + item.audio_seconds, 0)
   const recoveryGap = recovered.reduce((total, item) => total + item.gap_after_seconds, 0)
 
+  const submitTemporaryQuestion = async () => {
+    setQuestionBusy(true)
+    setComposerError('')
+    try {
+      await api.addTemporaryQuestion(snapshot.id, questionDraft, searchExternal)
+      setQuestionDraft('')
+      setComposerOpen(false)
+    } catch (reason) {
+      setComposerError(reason instanceof Error ? reason.message : '临时问题保存失败')
+    } finally {
+      setQuestionBusy(false)
+    }
+  }
+
   return (
     <main className="workbench-shell">
       <header className="live-header">
@@ -253,6 +295,11 @@ function LiveWorkbench({
           <h1>{snapshot.preset.title}</h1>
         </div>
         <div className="live-actions">
+          {!isStopped && (
+            <button className="icon-text-button" onClick={() => setComposerOpen(true)} title="添加现场临时问题">
+              <MessageSquarePlus size={17} />临时问题
+            </button>
+          )}
           {snapshot.external_ai_enabled && !isStopped && (
             <button className="icon-text-button" onClick={onAnalyze} disabled={busy} title="立即分析最近 120 秒">
               <BrainCircuit size={17} />立即判断
@@ -290,6 +337,37 @@ function LiveWorkbench({
           <strong>已合并 {recovered.length} 个重启前阶段</strong>
           <span>恢复 {formatTime(recoveredAudio)} 录音、{recoveredSegments} 段字幕、{recovered.reduce((total, item) => total + item.ai_analysis_runs, 0)} 次 AI 判断</span>
           {recoveryGap > 0 && <em>已标记约 {formatTime(recoveryGap)} 的录音缺口</em>}
+        </div>
+      )}
+
+      {composerOpen && (
+        <div className="composer-backdrop" role="presentation">
+          <section className="question-composer" role="dialog" aria-modal="true" aria-labelledby="composer-title">
+            <div className="composer-heading">
+              <div><MessageSquarePlus size={18} /><h2 id="composer-title">现场临时问题</h2></div>
+              <button className="icon-button compact" onClick={() => setComposerOpen(false)} title="关闭"><X size={17} /></button>
+            </div>
+            <p>写下粗略想法，或留空让系统根据尚未回答的关键缺口形成问题。</p>
+            <textarea
+              value={questionDraft}
+              onChange={(event) => setQuestionDraft(event.target.value)}
+              placeholder="例如：兄弟姐妹固定效应仍无法排除哪些个体层面的选择？"
+              rows={4}
+              autoFocus
+            />
+            <label className="composer-search-toggle">
+              <input type="checkbox" checked={searchExternal} onChange={(event) => setSearchExternal(event.target.checked)} />
+              <span><strong>检索学术依据</strong><small>先查完整讲座字幕，再查 OpenAlex 与 Crossref；不抓 Google Scholar。</small></span>
+            </label>
+            {composerError && <p className="inline-error"><AlertCircle size={15} />{composerError}</p>}
+            <div className="composer-actions">
+              <button className="secondary-button" onClick={() => setComposerOpen(false)}>取消</button>
+              <button className="primary-button" onClick={submitTemporaryQuestion} disabled={questionBusy}>
+                {questionBusy ? <Loader2 className="spin" size={17} /> : <Search size={17} />}
+                保存并检索
+              </button>
+            </div>
+          </section>
         </div>
       )}
 
@@ -343,7 +421,7 @@ function LiveWorkbench({
             </div>
           </div>
           <div className="question-scroll">
-            {snapshot.questions.map((question) => <QuestionCard key={question.id} question={question} />)}
+            {snapshot.questions.map((question) => <QuestionCard key={question.id} question={question} currentSessionId={snapshot.id} />)}
           </div>
         </div>
       </section>
