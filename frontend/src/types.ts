@@ -33,6 +33,7 @@ export interface Evidence {
   quote: string
   relation: 'keyword_match' | 'direct_answer' | 'background' | 'contradiction'
   confidence: number
+  source_session?: string | null
 }
 
 export interface QuestionState {
@@ -56,12 +57,24 @@ export interface SessionSnapshot {
   asr_state: string
   analyzer_state: string
   external_ai_enabled: boolean
+  recovered_sessions?: RecoveredSessionState[]
+  timeline_offset_seconds?: number
   transcript: TranscriptSegment[]
   provisional_text: string
   questions: QuestionState[]
   followups: string[]
   last_error: string
   export_path?: string | null
+}
+
+export interface RecoveredSessionState {
+  session_id: string
+  started_at: string
+  audio_seconds: number
+  timeline_offset_seconds: number
+  gap_after_seconds: number
+  transcript: TranscriptSegment[]
+  ai_analysis_runs: number
 }
 
 export interface Health {

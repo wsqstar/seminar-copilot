@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  History,
 } from 'lucide-react'
 import { api } from './api'
 import { listAudioInputs, startAudioCapture, type AudioCapture } from './audio'
@@ -51,7 +52,7 @@ function QuestionCard({ question }: { question: QuestionState }) {
       {question.answer && <p className="answer-text">{question.answer}</p>}
       {evidence && (
         <blockquote>
-          <time>{formatTime(evidence.start)}</time>
+          <time>{formatTime(evidence.start)}{evidence.source_session && <small>合并</small>}</time>
           <span>{evidence.quote}</span>
         </blockquote>
       )}
@@ -234,6 +235,11 @@ function LiveWorkbench({
   }, [snapshot.transcript.length, snapshot.provisional_text])
 
   const isStopped = snapshot.status === 'stopped'
+  const recovered = snapshot.recovered_sessions ?? []
+  const timelineOffset = snapshot.timeline_offset_seconds ?? 0
+  const recoveredSegments = recovered.reduce((total, item) => total + item.transcript.length, 0)
+  const recoveredAudio = recovered.reduce((total, item) => total + item.audio_seconds, 0)
+  const recoveryGap = recovered.reduce((total, item) => total + item.gap_after_seconds, 0)
 
   return (
     <main className="workbench-shell">
@@ -278,20 +284,43 @@ function LiveWorkbench({
 
       {snapshot.last_error && <div className="error-banner"><AlertCircle size={17} />{snapshot.last_error}</div>}
       {snapshot.export_path && <div className="success-banner"><Check size={17} />已导出：{snapshot.export_path}</div>}
+      {recovered.length > 0 && (
+        <div className="recovery-banner">
+          <History size={17} />
+          <strong>已合并 {recovered.length} 个重启前阶段</strong>
+          <span>恢复 {formatTime(recoveredAudio)} 录音、{recoveredSegments} 段字幕、{recovered.reduce((total, item) => total + item.ai_analysis_runs, 0)} 次 AI 判断</span>
+          {recoveryGap > 0 && <em>已标记约 {formatTime(recoveryGap)} 的录音缺口</em>}
+        </div>
+      )}
 
       <section className="workbench-grid">
         <div className="transcript-pane">
           <div className="pane-heading">
             <div><span className={isStopped ? 'record-dot stopped' : 'record-dot'} /><h2>现场转录</h2></div>
-            <span>{snapshot.transcript.length} 个稳定片段</span>
+            <span>{snapshot.transcript.length + recoveredSegments} 个稳定片段</span>
           </div>
           <div className="transcript-scroll" aria-live="polite">
-            {snapshot.transcript.length === 0 && (
+            {snapshot.transcript.length === 0 && recovered.length === 0 && (
               <div className="empty-state"><Mic size={28} /><p>等待第一段稳定语音</p><span>通常需要 10–15 秒。</span></div>
             )}
+            {recovered.map((phase, index) => (
+              <div className="recovered-phase" key={phase.session_id}>
+                <div className="timeline-divider"><span>重启前阶段 {index + 1}</span><small>{phase.ai_analysis_runs} 次 AI 判断</small></div>
+                {phase.transcript.map((segment) => (
+                  <div className="transcript-segment recovered" key={`${phase.session_id}-${segment.id}`}>
+                    <time>{formatTime(phase.timeline_offset_seconds + segment.start)}</time>
+                    <p>{segment.text}</p>
+                  </div>
+                ))}
+                {phase.gap_after_seconds > 0 && (
+                  <div className="timeline-gap">录音重启缺口约 {formatTime(phase.gap_after_seconds)}</div>
+                )}
+              </div>
+            ))}
+            {recovered.length > 0 && <div className="timeline-divider current"><span>当前录音阶段</span></div>}
             {snapshot.transcript.map((segment) => (
               <div className="transcript-segment" key={segment.id}>
-                <time>{formatTime(segment.start)}</time>
+                <time>{formatTime(timelineOffset + segment.start)}</time>
                 <p>{segment.text}</p>
               </div>
             ))}

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.analyzer import keyword_hits, quote_is_grounded
-from app.models import QuestionDefinition
+from app.models import QuestionDefinition, SeminarPreset
 from app.presets import load_presets
-from app.session import export_filename, format_seconds, slugify
+from app.recovery import build_recovered_states, find_recovery_sources
+from app.session import SeminarSession, export_filename, format_seconds, slugify
 
 
 def test_preset_is_loadable_and_has_question_slots() -> None:
@@ -49,3 +50,60 @@ def test_preset_json_contains_no_api_credentials() -> None:
     text = config.read_text(encoding="utf-8").lower()
     assert "api_key" not in text
     json.loads(text)
+
+
+def test_recent_orphan_sessions_form_a_recovery_chain(tmp_path: Path) -> None:
+    preset_id = "lecture-2026-09-09"
+    starts = [datetime(2026, 9, 9, 14, 0), datetime(2026, 9, 9, 14, 1)]
+    for index, started_at in enumerate(starts):
+        session_id = f"{preset_id}-{started_at:%Y%m%d-%H%M%S}-abc{index}"
+        root = tmp_path / session_id
+        root.mkdir()
+        (root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "id": session_id,
+                    "preset_id": preset_id,
+                    "status": "recording",
+                    "sample_rate": 16_000,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "audio.pcm").write_bytes(b"\0\0" * 16_000 * 50)
+        (root / "transcript.jsonl").write_text(
+            json.dumps({"id": "seg-1", "start": 3, "end": 8, "text": f"phase {index}"}) + "\n",
+            encoding="utf-8",
+        )
+
+    now = datetime(2026, 9, 9, 14, 2)
+    sources = find_recovery_sources(tmp_path, preset_id, now)
+    states, offset = build_recovered_states(sources, now)
+
+    assert len(states) == 2
+    assert states[0].gap_after_seconds == 10
+    assert states[1].gap_after_seconds == 10
+    assert offset == 120
+
+
+def test_deep_updates_never_downgrade_an_existing_answer(tmp_path: Path) -> None:
+    preset = SeminarPreset(
+        id="test",
+        title="Test",
+        speaker="Speaker",
+        date="2026-09-09",
+        questions=[QuestionDefinition(id="q1", question="Question")],
+    )
+    session = SeminarSession(preset, tmp_path, object(), object(), False)  # type: ignore[arg-type]
+    session.questions[0].status = "answered"
+    session.questions[0].answer = "Grounded earlier answer"
+
+    session._apply_deep_updates(
+        [{"question_id": "q1", "status": "unanswered", "answer": ""}],
+        "new short window",
+        [],
+    )
+
+    assert session.questions[0].status == "answered"
+    assert session.questions[0].answer == "Grounded earlier answer"
+    session._raw_file.close()

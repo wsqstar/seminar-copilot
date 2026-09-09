@@ -17,6 +17,8 @@ and exports an evidence-linked Markdown note.
 - Optional DeepSeek Harness analysis over a rolling 120-second window.
 - One in-flight deep analysis; stale pending requests are not queued.
 - Session WAV, JSONL transcript, question state, and Markdown export.
+- Crash recovery discovers recent same-preset orphan sessions, rebuilds prior
+  question judgments, and presents a continuous timeline with explicit gaps.
 
 ## Deferred
 
@@ -38,6 +40,9 @@ and exports an evidence-linked Markdown note.
 - [done] DeepSeek Harness integration returned grounded structured states for
   the three-segment demo: three partial and three unanswered questions, plus
   two follow-up candidates.
+- [done] A restart-recovery path preserves prior transcript and AI JSONL,
+  prevents question-state downgrades, and includes recovered phases in web and
+  Markdown output.
 
 ## Next checkpoint
 

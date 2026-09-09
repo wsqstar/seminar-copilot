@@ -39,6 +39,7 @@ class Evidence(BaseModel):
     quote: str
     relation: Literal["keyword_match", "direct_answer", "background", "contradiction"]
     confidence: float = Field(ge=0.0, le=1.0)
+    source_session: str | None = None
 
 
 class QuestionState(BaseModel):
@@ -61,6 +62,16 @@ class TranscriptSegment(BaseModel):
     final: bool = True
 
 
+class RecoveredSessionState(BaseModel):
+    session_id: str
+    started_at: str
+    audio_seconds: float
+    timeline_offset_seconds: float
+    gap_after_seconds: float = 0.0
+    transcript: list[TranscriptSegment] = Field(default_factory=list)
+    ai_analysis_runs: int = 0
+
+
 class SessionSnapshot(BaseModel):
     id: str
     status: Literal["recording", "stopping", "stopped", "error"]
@@ -70,6 +81,8 @@ class SessionSnapshot(BaseModel):
     asr_state: str
     analyzer_state: str
     external_ai_enabled: bool
+    recovered_sessions: list[RecoveredSessionState] = Field(default_factory=list)
+    timeline_offset_seconds: float = 0.0
     transcript: list[TranscriptSegment]
     provisional_text: str = ""
     questions: list[QuestionState]

@@ -18,10 +18,12 @@ from .asr import WhisperTranscriber
 from .models import (
     Evidence,
     QuestionState,
+    RecoveredSessionState,
     SeminarPreset,
     SessionSnapshot,
     TranscriptSegment,
 )
+from .recovery import RecoverySource, build_recovered_states, find_recovery_sources
 
 
 SAMPLE_RATE = 16_000
@@ -40,6 +42,7 @@ class SeminarSession:
         transcriber: WhisperTranscriber,
         analyzer: DeepSeekAnalyzer,
         external_ai_enabled: bool,
+        recovered_sources: list[RecoverySource] | None = None,
     ) -> None:
         self.started_at = datetime.now()
         stamp = self.started_at.strftime("%Y%m%d-%H%M%S")
@@ -71,6 +74,10 @@ class SeminarSession:
             )
             for q in preset.questions
         ]
+        sources = recovered_sources or []
+        self.recovered_sessions, self.timeline_offset_seconds = build_recovered_states(
+            sources, self.started_at
+        )
         self.followups: list[str] = []
         self.last_error = ""
         self.export_path: str | None = None
@@ -83,6 +90,7 @@ class SeminarSession:
         self._transcript_path = self.root / "transcript.jsonl"
         self._analysis_path = self.root / "analysis.jsonl"
         self._raw_file = self._raw_path.open("ab", buffering=0)
+        self._seed_recovered_state(sources)
         self._write_manifest()
 
     @property
@@ -159,7 +167,11 @@ class SeminarSession:
                     if not self._is_duplicate(segment.text):
                         self.transcript.append(segment)
                         self._append_jsonl(self._transcript_path, segment.model_dump())
-                        self._apply_local_matches(segment)
+                        self._apply_local_matches(
+                            segment,
+                            source_session=self.id,
+                            evidence_offset=self.timeline_offset_seconds,
+                        )
                         committed_any = True
                     self.committed_until = max(self.committed_until, end)
                 elif end > stable_before:
@@ -182,7 +194,13 @@ class SeminarSession:
             for item in self.transcript[-3:]
         )
 
-    def _apply_local_matches(self, segment: TranscriptSegment) -> None:
+    def _apply_local_matches(
+        self,
+        segment: TranscriptSegment,
+        *,
+        source_session: str | None = None,
+        evidence_offset: float = 0.0,
+    ) -> None:
         definitions = {item.id: item for item in self.preset.questions}
         for state in self.questions:
             hits = keyword_hits(definitions[state.id], segment.text)
@@ -190,11 +208,12 @@ class SeminarSession:
                 continue
             evidence = Evidence(
                 segment_id=segment.id,
-                start=segment.start,
-                end=segment.end,
+                start=round(segment.start + evidence_offset, 2),
+                end=round(segment.end + evidence_offset, 2),
                 quote=segment.text,
                 relation="keyword_match",
                 confidence=min(0.65, 0.3 + 0.1 * len(hits)),
+                source_session=source_session,
             )
             if all(item.segment_id != segment.id for item in state.evidence):
                 state.evidence.append(evidence)
@@ -222,7 +241,13 @@ class SeminarSession:
                 self.questions,
                 str(self.root),
             )
-            self._apply_deep_updates(result.updates, transcript_text, window_segments)
+            self._apply_deep_updates(
+                result.updates,
+                transcript_text,
+                window_segments,
+                source_session=self.id,
+                evidence_offset=self.timeline_offset_seconds,
+            )
             self.followups = result.followups
             self._append_jsonl(
                 self._analysis_path,
@@ -247,6 +272,9 @@ class SeminarSession:
         updates: list[dict],
         transcript_text: str,
         window_segments: list[TranscriptSegment],
+        *,
+        source_session: str | None = None,
+        evidence_offset: float = 0.0,
     ) -> None:
         states = {state.id: state for state in self.questions}
         for item in updates:
@@ -258,7 +286,9 @@ class SeminarSession:
             grounded = quote_is_grounded(quote, transcript_text)
             if status == "answered" and not grounded:
                 status = "partial"
-            if STATUS_ORDER[status] < STATUS_ORDER[state.status] and status != "unanswered":
+            if STATUS_ORDER[status] < STATUS_ORDER[state.status]:
+                continue
+            if STATUS_ORDER[status] == STATUS_ORDER[state.status] and state.status != "unanswered" and not grounded:
                 continue
             state.status = status  # type: ignore[assignment]
             state.answer = str(item.get("answer", "")).strip()
@@ -278,11 +308,12 @@ class SeminarSession:
                     state.evidence.append(
                         Evidence(
                             segment_id=source.id,
-                            start=source.start,
-                            end=source.end,
+                            start=round(source.start + evidence_offset, 2),
+                            end=round(source.end + evidence_offset, 2),
                             quote=quote,
                             relation="direct_answer" if status in {"partial", "answered"} else "background",
                             confidence=state.confidence,
+                            source_session=source_session,
                         )
                     )
                     state.evidence = state.evidence[-5:]
@@ -330,6 +361,8 @@ class SeminarSession:
             asr_state=self.asr_state,
             analyzer_state=self.analyzer_state,
             external_ai_enabled=self.external_ai_enabled,
+            recovered_sessions=self.recovered_sessions,
+            timeline_offset_seconds=self.timeline_offset_seconds,
             transcript=self.transcript,
             provisional_text=self.provisional_text,
             questions=self.questions,
@@ -390,9 +423,28 @@ class SeminarSession:
                 )
             lines.append("")
         lines.extend(["## 完整稳定转录", ""])
+        for recovered in self.recovered_sessions:
+            lines.append(f"### 重启前阶段 `{recovered.session_id}`")
+            lines.append("")
+            for segment in recovered.transcript:
+                start = recovered.timeline_offset_seconds + segment.start
+                end = recovered.timeline_offset_seconds + segment.end
+                lines.append(f"[{format_seconds(start)}-{format_seconds(end)}] {segment.text}")
+            if recovered.gap_after_seconds > 0:
+                lines.extend(
+                    [
+                        "",
+                        f"> 录音重启缺口：约 {recovered.gap_after_seconds:.1f} 秒。",
+                        "",
+                    ]
+                )
+        if self.recovered_sessions:
+            lines.extend(["### 当前阶段", ""])
         for segment in self.transcript:
+            start = self.timeline_offset_seconds + segment.start
+            end = self.timeline_offset_seconds + segment.end
             lines.append(
-                f"[{format_seconds(segment.start)}-{format_seconds(segment.end)}] {segment.text}"
+                f"[{format_seconds(start)}-{format_seconds(end)}] {segment.text}"
             )
         if self.followups:
             lines.extend(["", "## 建议追问", ""])
@@ -419,6 +471,8 @@ class SeminarSession:
             "external_ai_enabled": self.external_ai_enabled,
             "source_path": self.preset.source_path,
             "export_path": self.export_path,
+            "recovered_session_ids": [item.session_id for item in self.recovered_sessions],
+            "timeline_offset_seconds": self.timeline_offset_seconds,
         }
         (self.root / "manifest.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -428,6 +482,38 @@ class SeminarSession:
     def _append_jsonl(path: Path, payload: dict) -> None:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    def _seed_recovered_state(self, sources: list[RecoverySource]) -> None:
+        if not sources:
+            return
+        state_by_id = {item.session_id: item for item in self.recovered_sessions}
+        for source in sources:
+            recovered = state_by_id[source.session_id]
+            transformed = [
+                TranscriptSegment(
+                    id=f"{source.session_id}:{segment.id}",
+                    start=round(recovered.timeline_offset_seconds + segment.start, 2),
+                    end=round(recovered.timeline_offset_seconds + segment.end, 2),
+                    text=segment.text,
+                    final=segment.final,
+                )
+                for segment in source.transcript
+            ]
+            for segment in transformed:
+                self._apply_local_matches(segment, source_session=source.session_id)
+            transcript_text = "\n".join(segment.text for segment in transformed)
+            for row in source.analysis_rows:
+                updates = row.get("updates", [])
+                if isinstance(updates, list):
+                    self._apply_deep_updates(
+                        updates,
+                        transcript_text,
+                        transformed,
+                        source_session=source.session_id,
+                    )
+                followups = row.get("followups", [])
+                if isinstance(followups, list) and followups:
+                    self.followups = [str(item) for item in followups if str(item).strip()]
 
 
 class SessionManager:
@@ -444,12 +530,15 @@ class SessionManager:
         preset = self.presets.get(preset_id)
         if preset is None:
             raise KeyError(preset_id)
+        now = datetime.now()
+        recovered_sources = find_recovery_sources(self.root, preset_id, now)
         session = SeminarSession(
             preset=preset,
             root=self.root,
             transcriber=self.transcriber,
             analyzer=self.analyzer,
             external_ai_enabled=external_ai_enabled,
+            recovered_sources=recovered_sources,
         )
         self.sessions[session.id] = session
         session.start_background_loop()
