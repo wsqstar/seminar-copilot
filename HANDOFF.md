@@ -37,6 +37,10 @@ and exports an evidence-linked Markdown note.
   detects each window; pin e.g. `"en"`/`"zh"` if needed), overridable via
   `SEMINAR_WHISPER_LANGUAGE`. Keep preset glossaries to real domain terms:
   junk notice-title tokens in the initial prompt cause hallucination loops.
+  Intake topic keywords (paste → parse → confirm) are now filtered by
+  `_clean_glossary` in `backend/app/intake.py` — notice boilerplate
+  (讲座预告/图片/报名…) and >12-char Chinese fragments are dropped before the
+  preset is written, so select-all pastes no longer pollute the glossary.
 - Auto-generated follow-up questions are behind the explicit
   `auto_questions_enabled` switch (start/continue panels); suggestions appear
   in the follow-up bar and can be clicked to adopt as tracked questions. The

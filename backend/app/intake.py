@@ -96,6 +96,33 @@ def _clean_list(value, limit: int) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()][:limit]
 
 
+GLOSSARY_BOILERPLATE = re.compile(
+    r"讲座预告|讲座通知|学术研讨会|研讨会通知|预告|报名|扫码|海报|二维码|直播|"
+    r"回放|会议通知|时间地点|主办单位|承办单位|欢迎参加|讲座系列|图片|详情|"
+    r"registration|register|poster|qr ?code|live.?stream",
+    re.IGNORECASE,
+)
+_CHINESE_RUN = re.compile(r"^[\u4e00-\u9fff]+$")
+
+
+def _clean_glossary(items: list[str], limit: int = 30) -> list[str]:
+    """Keep only real domain terms; drop notice boilerplate and title fragments."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        term = str(item).strip()
+        if not term or term.lower() in seen:
+            continue
+        if GLOSSARY_BOILERPLATE.search(term):
+            continue
+        # 纯中文且超过 12 字的几乎都是标题/正文碎片，不是术语
+        if _CHINESE_RUN.fullmatch(term) and len(term) > 12:
+            continue
+        seen.add(term.lower())
+        cleaned.append(term)
+    return cleaned[:limit]
+
+
 async def parse_announcement_deepseek(raw_text: str) -> ParsedSeminar:
     prompt = (
         "You parse academic seminar announcements. Do not use tools and do not "
@@ -103,8 +130,10 @@ async def parse_announcement_deepseek(raw_text: str) -> ParsedSeminar:
         "Return exactly one compact JSON object without markdown with schema: "
         '{"title":"...","speaker":"...","speaker_affiliation":"...","date":"YYYY-MM-DD",'
         '"abstract":"...","topic_keywords":["..."]}. '
-        "Keep the abstract under 2000 characters and use 3-8 English or Chinese "
-        "topic keywords that appear in the announcement.\n\n"
+        "Keep the abstract under 2000 characters and use 3-8 short technical or "
+        "domain terms as topic keywords (methods, phenomena, places, datasets). "
+        "Never use event boilerplate (讲座预告/报名/海报/seminar notice) or copy "
+        "title fragments verbatim.\n\n"
         f"ANNOUNCEMENT:\n{raw_text}"
     )
     payload = await _run_dsh(prompt, 90)
@@ -394,7 +423,7 @@ def write_intake_preset(
         speaker=request.parsed.speaker.strip() or "未知演讲者",
         date=request.parsed.date.strip() or date_type.today().isoformat(),
         source_path=None,
-        glossary=[item for item in request.glossary if item.strip()][:30],
+        glossary=_clean_glossary(request.glossary),
         questions=request.questions,
     )
     target = config_dir / f"{preset_id}.json"

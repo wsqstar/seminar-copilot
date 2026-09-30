@@ -400,3 +400,28 @@ def test_preset_reload_picks_up_new_file(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("app.presets.CONFIG_DIR", config_dir)
     reload_presets(current)
     assert preset_id in current
+
+
+def test_intake_glossary_filters_boilerplate_and_title_fragments(tmp_path) -> None:
+    from app import intake
+    from app.models import IntakeConfirmRequest, ParsedSeminar, QuestionDefinition
+
+    request = IntakeConfirmRequest(
+        parsed=ParsedSeminar(title="城市绿地降温效应", speaker="A", date="2026-09-20"),
+        questions=[QuestionDefinition(id="q1", question="问题?")],
+        glossary=[
+            "讲座预告",
+            "图片",
+            "学术研讨会",
+            "东亚与东南亚高密度城市的经验",
+            "urban heat island",
+            "局地气候分区",
+            "局地气候分区",
+            "   ",
+        ],
+    )
+    config_dir = tmp_path / "seminars"
+    config_dir.mkdir()
+    path = intake.write_intake_preset(request, "clean-test", config_dir)
+    preset = json.loads(path.read_text(encoding="utf-8"))
+    assert preset["glossary"] == ["urban heat island", "局地气候分区"]
