@@ -99,6 +99,7 @@ export interface RecoveredSessionState {
 
 export interface Health {
   ok: boolean
+  asr_backend?: string
   whisper_model: string
   whisper_state: 'cold' | 'loading' | 'ready' | 'error'
   whisper_error: string

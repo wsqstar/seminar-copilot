@@ -77,6 +77,7 @@ app.add_middleware(
 def health() -> dict:
     return {
         "ok": True,
+        "asr_backend": manager.transcriber.backend_name,
         "whisper_model": manager.transcriber.model,
         "whisper_state": manager.transcriber.state,
         "whisper_error": manager.transcriber.last_error,

@@ -14,7 +14,7 @@ import numpy as np
 from fastapi import WebSocket
 
 from .analyzer import STATUS_ORDER, DeepSeekAnalyzer, keyword_hits, quote_is_grounded
-from .asr import WhisperTranscriber
+from .asr import BailianTranscriber, WhisperTranscriber, create_transcriber
 from .models import (
     Evidence,
     QuestionDefinition,
@@ -47,7 +47,7 @@ class SeminarSession:
         self,
         preset: SeminarPreset,
         root: Path,
-        transcriber: WhisperTranscriber,
+        transcriber: WhisperTranscriber | BailianTranscriber,
         analyzer: DeepSeekAnalyzer,
         external_ai_enabled: bool,
         auto_questions_enabled: bool = False,
@@ -828,7 +828,7 @@ class SessionManager:
         self.root = Path(os.environ.get("SEMINAR_DATA_DIR", str(default_root))).expanduser()
         self.root.mkdir(parents=True, exist_ok=True)
         self.presets = presets
-        self.transcriber = WhisperTranscriber()
+        self.transcriber = create_transcriber()
         self.analyzer = DeepSeekAnalyzer()
         self.sessions: dict[str, SeminarSession] = {}
 

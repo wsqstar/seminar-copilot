@@ -235,10 +235,10 @@ function SetupPanel({
           {!health?.ok
             ? '正在连接后端'
             : health.whisper_state === 'ready'
-              ? '本地转录已就绪'
+              ? health.asr_backend === 'bailian' ? '百炼转录已就绪' : '本地转录已就绪'
               : health.whisper_state === 'error'
-                ? 'Whisper 预热失败'
-              : 'Whisper 预热中'}
+                ? health.asr_backend === 'bailian' ? '百炼语音识别不可用' : 'Whisper 预热失败'
+              : '语音识别预热中'}
         </div>
         <div className="header-actions">
           <button className="icon-text-button" onClick={onIntake} type="button">
@@ -267,7 +267,7 @@ function SetupPanel({
           {!consent && <small className="quick-record-hint">请先勾选下方「我已确认现场允许录音」</small>}
           {consent && !busy && health?.whisper_state !== 'ready' && (
             <small className="quick-record-hint">
-              {health?.whisper_state === 'error' ? 'Whisper 预热失败，请查看上方状态条' : 'Whisper 模型加载中，就绪后即可速录'}
+              {health?.whisper_state === 'error' ? '语音识别不可用，请查看上方状态条' : '语音识别加载中，就绪后即可速录'}
             </small>
           )}
         </div>

@@ -452,3 +452,61 @@ def test_llm_backend_selection(monkeypatch) -> None:
     monkeypatch.setenv("SEMINAR_LLM_BACKEND", "api")
     assert not llm.api_configured()
     assert not llm.llm_available()
+
+
+def test_asr_backend_factory(monkeypatch) -> None:
+    from app.asr import BailianTranscriber, WhisperTranscriber, create_transcriber
+
+    monkeypatch.delenv("SEMINAR_ASR_BACKEND", raising=False)
+    assert isinstance(create_transcriber(), WhisperTranscriber)
+    monkeypatch.setenv("SEMINAR_ASR_BACKEND", "bailian")
+    assert isinstance(create_transcriber(), BailianTranscriber)
+    assert create_transcriber().backend_name == "bailian"
+    monkeypatch.setenv("SEMINAR_ASR_BACKEND", "bogus")
+    with pytest.raises(ValueError):
+        create_transcriber()
+
+
+def test_bailian_requires_api_key(monkeypatch) -> None:
+    import numpy as np
+
+    from app.asr import BailianTranscriber
+
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    transcriber = BailianTranscriber()
+    transcriber.warmup()
+    assert transcriber.state == "error"
+    assert "DASHSCOPE_API_KEY" in transcriber.last_error
+    with pytest.raises(RuntimeError):
+        transcriber.transcribe(np.zeros(1600, dtype=np.float32), "")
+    assert transcriber.state == "error"
+
+
+def test_bailian_extracts_sentences_with_timestamps() -> None:
+    from app.asr import _extract_sentences
+
+    class FakeResult:
+        def get_sentence(self):
+            return [
+                {"begin_time": 1200, "end_time": 3400, "text": " 大家好 "},
+                {"begin_time": 3600, "end_time": 5000, "text": ""},
+                {"begin_time": 5200, "end_time": 7800, "text": "今天讨论城市治理"},
+            ]
+
+    segments = _extract_sentences(FakeResult())
+    assert [(s.start, s.end, s.text) for s in segments] == [
+        (1.2, 3.4, "大家好"),
+        (5.2, 7.8, "今天讨论城市治理"),
+    ]
+
+
+def test_bailian_language_hints(monkeypatch) -> None:
+    from app.asr import _bailian_language_hints
+
+    monkeypatch.delenv("SEMINAR_ASR_LANGUAGE", raising=False)
+    assert _bailian_language_hints("zh") == ["zh"]
+    assert _bailian_language_hints("en") == ["en"]
+    assert _bailian_language_hints("auto") == []
+    monkeypatch.setenv("SEMINAR_ASR_LANGUAGE", "en")
+    assert _bailian_language_hints("zh") == ["en"]
+

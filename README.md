@@ -102,7 +102,9 @@ input device.
 
 ## Privacy boundary
 
-- Recording and Whisper transcription stay local.
+- Recording stays local. Whisper transcription (`SEMINAR_ASR_BACKEND=mlx`,
+  default) stays local; with `SEMINAR_ASR_BACKEND=bailian`, short audio windows
+  are sent to the Aliyun Bailian (DashScope) recognition API instead.
 - Raw audio and session state are stored under `data/sessions/` by default and
   are ignored by Git.
 - Project notes are append-only JSONL under `data/projects/<project-id>/` and
@@ -119,6 +121,12 @@ input device.
 SEMINAR_DATA_DIR=/absolute/path/to/session-data
 SEMINAR_WHISPER_MODEL=mlx-community/whisper-large-v3-turbo
 SEMINAR_PREWARM_WHISPER=1
+# ASR backend: mlx (local MLX Whisper, default) or bailian (Aliyun Bailian API)
+SEMINAR_ASR_BACKEND=bailian
+# Required when SEMINAR_ASR_BACKEND=bailian (uv sync --extra bailian)
+DASHSCOPE_API_KEY=sk-your-dashscope-key
+SEMINAR_BAILIAN_MODEL=paraformer-v2
+SEMINAR_ASR_LANGUAGE=auto
 SEMINAR_DSH_BIN=/opt/homebrew/bin/dsh
 SEMINAR_OBSIDIAN_EXPORT_DIR=/absolute/path/to/obsidian/folder
 SEMINAR_ENABLE_DEMO=1
