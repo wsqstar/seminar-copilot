@@ -425,3 +425,30 @@ def test_intake_glossary_filters_boilerplate_and_title_fragments(tmp_path) -> No
     path = intake.write_intake_preset(request, "clean-test", config_dir)
     preset = json.loads(path.read_text(encoding="utf-8"))
     assert preset["glossary"] == ["urban heat island", "局地气候分区"]
+
+
+def test_llm_extract_json_handles_markdown_fences() -> None:
+    from app import llm
+
+    fence = chr(96) * 3
+    assert llm.extract_json(fence + "json" + chr(10) + "{\"a\": 1}" + chr(10) + fence) == {"a": 1}
+    assert llm.extract_json("{\"a\": 2}") == {"a": 2}
+    with pytest.raises(RuntimeError):
+        llm.extract_json("not json at all")
+    with pytest.raises(RuntimeError):
+        llm.extract_json("[1, 2]")
+
+
+def test_llm_backend_selection(monkeypatch) -> None:
+    from app import llm
+
+    monkeypatch.delenv("SEMINAR_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("SEMINAR_API_KEY", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    assert llm.api_configured()
+    assert llm.llm_available()
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("SEMINAR_LLM_BACKEND", "api")
+    assert not llm.api_configured()
+    assert not llm.llm_available()

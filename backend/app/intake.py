@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import re
-import shutil
 import unicodedata
 from dataclasses import dataclass
 from datetime import date as date_type
 from pathlib import Path
 
+from . import llm
 from .models import (
     IntakeConfirmRequest,
     ParsedSeminar,
@@ -53,41 +51,8 @@ SPEAKER_LABELS = (
 )
 
 
-async def _run_dsh(prompt: str, timeout: float) -> dict:
-    binary = os.environ.get("SEMINAR_DSH_BIN") or shutil.which("dsh") or "dsh"
-    env = os.environ.copy()
-    env["DSH_PERMISSION_MODE"] = "read-only"
-    process = await asyncio.create_subprocess_exec(
-        binary,
-        "--profile",
-        "headless",
-        prompt,
-        cwd=str(BACKEND_ROOT),
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except TimeoutError:
-        process.kill()
-        await process.wait()
-        raise RuntimeError("dsh intake step exceeded its timeout") from None
-    if process.returncode != 0:
-        message = stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(message or f"dsh exited with {process.returncode}")
-    cleaned = stdout.decode("utf-8", errors="replace").strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-    payload = json.loads(cleaned)
-    if not isinstance(payload, dict):
-        raise RuntimeError("dsh intake output must be a JSON object")
-    return payload
-
-
-def dsh_available() -> bool:
-    return bool(os.environ.get("SEMINAR_DSH_BIN") or shutil.which("dsh"))
+async def _run_llm(prompt: str, timeout: float) -> dict:
+    return await llm.complete_json(prompt, timeout, cwd=str(BACKEND_ROOT))
 
 
 def _clean_list(value, limit: int) -> list[str]:
@@ -136,7 +101,7 @@ async def parse_announcement_deepseek(raw_text: str) -> ParsedSeminar:
         "title fragments verbatim.\n\n"
         f"ANNOUNCEMENT:\n{raw_text}"
     )
-    payload = await _run_dsh(prompt, 90)
+    payload = await _run_llm(prompt, 90)
     return ParsedSeminar(
         title=str(payload.get("title") or "").strip()[:300],
         speaker=str(payload.get("speaker") or "").strip()[:200],
@@ -211,7 +176,7 @@ def parse_announcement_heuristic(raw_text: str) -> ParsedSeminar:
 
 
 async def parse_announcement(raw_text: str) -> ParsedSeminar:
-    if dsh_available():
+    if llm.llm_available():
         try:
             parsed = await parse_announcement_deepseek(raw_text)
             if parsed.title or parsed.speaker:
@@ -253,7 +218,7 @@ async def assess_relevance_deepseek(
         f"RESEARCHER PROFILE:\n{profile[:6000]}\n\n"
         f"SEMINAR:\n{json.dumps(parsed.model_dump(), ensure_ascii=False)}"
     )
-    payload = await _run_dsh(prompt, 75)
+    payload = await _run_llm(prompt, 75)
     try:
         score = max(1, min(5, int(payload.get("score") or 1)))
     except (TypeError, ValueError):
@@ -295,7 +260,7 @@ async def assess_relevance(parsed: ParsedSeminar) -> RelevanceReport:
             overlap_directions=[],
             method="keyword",
         )
-    if dsh_available():
+    if llm.llm_available():
         try:
             return await assess_relevance_deepseek(parsed, profile)
         except Exception:
@@ -352,7 +317,7 @@ async def propose_questions_deepseek(
         f"OVERLAP DIRECTIONS: {json.dumps(relevance.overlap_directions, ensure_ascii=False)}\n\n"
         f"CANDIDATE REFERENCES:\n{chr(10).join(source_lines) or '(none)'}"
     )
-    payload = await _run_dsh(prompt, 90)
+    payload = await _run_llm(prompt, 90)
     questions: list[QuestionDefinition] = []
     for index, item in enumerate(payload.get("questions", [])):
         if not isinstance(item, dict):
@@ -377,7 +342,7 @@ async def propose_questions(
     relevance: RelevanceReport,
     sources: list[ResearchSource],
 ) -> list[QuestionDefinition]:
-    if not dsh_available() or not parsed.title:
+    if not llm.llm_available() or not parsed.title:
         return []
     try:
         return await propose_questions_deepseek(parsed, relevance, sources)

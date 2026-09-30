@@ -28,7 +28,7 @@ and exports an evidence-linked Markdown note.
 - Manual notes are append-only project records and can be timestamped from the
   live recording or added during later review.
 - Paste-based intake: pasting a seminar announcement parses the speaker, title,
-  and date (dsh with a heuristic fallback), scores relevance against
+  and date (LLM with a heuristic fallback), scores relevance against
   `backend/config/research_profile.md`, searches OpenAlex/Crossref for the
   speaker and topic, proposes reviewable questions, then writes a preset JSON,
   a dossier under `data/dossiers/<preset_id>/`, and reloads presets without a
@@ -41,11 +41,20 @@ and exports an evidence-linked Markdown note.
   `_clean_glossary` in `backend/app/intake.py` — notice boilerplate
   (讲座预告/图片/报名…) and >12-char Chinese fragments are dropped before the
   preset is written, so select-all pastes no longer pollute the glossary.
+- All LLM calls (analysis ticks, question formulation, intake parsing) go
+  through `backend/app/llm.py`: an OpenAI-compatible API is preferred
+  (`SEMINAR_API_BASE`/`SEMINAR_API_KEY`/`SEMINAR_API_MODEL`, falling back
+  to `DEEPSEEK_API_URL`/`DEEPSEEK_API_KEY`/`DEEPSEEK_API_MODEL`); the old
+  `dsh --profile headless` subprocess remains only as the auto-mode fallback
+  when no API key is configured. `SEMINAR_LLM_BACKEND` = api|dsh|auto
+  (default auto). Note the configured model is a reasoning model —
+  `SEMINAR_API_MAX_TOKENS` defaults to 4096 so the JSON answer survives the
+  reasoning budget.
 - Auto-generated follow-up questions are behind the explicit
   `auto_questions_enabled` switch (start/continue panels); suggestions appear
   in the follow-up bar and can be clicked to adopt as tracked questions. The
-  backend must run outside the workspace file sandbox (dsh headless writes
-  ~/.dsh) or AI ticks fail with EPERM.
+  backend must run outside the workspace file sandbox or AI ticks fail with
+  EPERM — only relevant when the dsh fallback path is used (it writes ~/.dsh).
 
 ## Deferred
 

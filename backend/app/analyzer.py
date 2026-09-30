@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import re
-import shutil
 from dataclasses import dataclass
 
+from . import llm
 from .models import QuestionDefinition, QuestionState
 
 
@@ -46,9 +44,6 @@ class TemporaryQuestionDraft:
 
 
 class DeepSeekAnalyzer:
-    def __init__(self) -> None:
-        self.binary = os.environ.get("SEMINAR_DSH_BIN") or shutil.which("dsh") or "dsh"
-
     async def analyze(
         self,
         transcript: str,
@@ -56,29 +51,7 @@ class DeepSeekAnalyzer:
         cwd: str,
     ) -> DeepAnalysisResult:
         prompt = self._build_prompt(transcript, questions)
-        env = os.environ.copy()
-        env["DSH_PERMISSION_MODE"] = "read-only"
-        process = await asyncio.create_subprocess_exec(
-            self.binary,
-            "--profile",
-            "headless",
-            prompt,
-            cwd=cwd,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            raise RuntimeError("DeepSeek analysis exceeded 90 seconds") from None
-        if process.returncode != 0:
-            message = stderr.decode("utf-8", errors="replace").strip()
-            raise RuntimeError(message or f"dsh exited with {process.returncode}")
-
-        raw = stdout.decode("utf-8", errors="replace").strip()
+        raw = await llm.complete(prompt, 90, cwd)
         payload = self._parse_json(raw)
         updates = payload.get("updates", [])
         followups = payload.get("followups", [])
@@ -118,28 +91,7 @@ class DeepSeekAnalyzer:
             f"UNRESOLVED QUESTIONS:\n{json.dumps(unresolved, ensure_ascii=False)}\n\n"
             f"RECENT TRANSCRIPT:\n{transcript[-12000:]}"
         )
-        env = os.environ.copy()
-        env["DSH_PERMISSION_MODE"] = "read-only"
-        process = await asyncio.create_subprocess_exec(
-            self.binary,
-            "--profile",
-            "headless",
-            prompt,
-            cwd=cwd,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=75)
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            raise RuntimeError("Question formulation exceeded 75 seconds") from None
-        if process.returncode != 0:
-            message = stderr.decode("utf-8", errors="replace").strip()
-            raise RuntimeError(message or f"dsh exited with {process.returncode}")
-        payload = self._parse_json(stdout.decode("utf-8", errors="replace").strip())
+        payload = self._parse_json(await llm.complete(prompt, 75, cwd))
         question_zh = str(payload.get("question_zh") or draft).strip()
         question_en = str(payload.get("question_en") or draft).strip()
         if not question_zh or not question_en:
@@ -163,17 +115,7 @@ class DeepSeekAnalyzer:
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
-        cleaned = raw.strip()
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-            cleaned = re.sub(r"\s*```$", "", cleaned)
-        try:
-            value = json.loads(cleaned)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"DeepSeek returned invalid JSON: {exc}") from exc
-        if not isinstance(value, dict):
-            raise RuntimeError("DeepSeek output must be a JSON object")
-        return value
+        return llm.extract_json(raw)
 
     @staticmethod
     def _build_prompt(transcript: str, questions: list[QuestionState]) -> str:
