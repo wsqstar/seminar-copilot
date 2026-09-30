@@ -75,6 +75,7 @@ export interface SessionSnapshot {
   asr_state: string
   analyzer_state: string
   external_ai_enabled: boolean
+  auto_questions_enabled: boolean
   recovered_sessions?: RecoveredSessionState[]
   timeline_offset_seconds?: number
   transcript: TranscriptSegment[]

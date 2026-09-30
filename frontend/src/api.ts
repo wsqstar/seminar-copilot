@@ -27,12 +27,13 @@ export const api = {
     }),
   projects: () => request<ProjectSummary[]>('/api/projects'),
   project: (projectId: string) => request<ProjectDetail>(`/api/projects/${projectId}`),
-  start: (presetId: string, externalAiEnabled: boolean) =>
+  start: (presetId: string, externalAiEnabled: boolean, autoQuestionsEnabled = false) =>
     request<SessionSnapshot>('/api/sessions', {
       method: 'POST',
       body: JSON.stringify({
         preset_id: presetId,
         external_ai_enabled: externalAiEnabled,
+        auto_questions_enabled: autoQuestionsEnabled,
         recording_permission_confirmed: true,
       }),
     }),
@@ -47,11 +48,12 @@ export const api = {
     }),
   activeSession: (projectId: string) =>
     request<SessionSnapshot>(`/api/projects/${projectId}/active-session`),
-  continueProject: (projectId: string, externalAiEnabled: boolean) =>
+  continueProject: (projectId: string, externalAiEnabled: boolean, autoQuestionsEnabled = false) =>
     request<SessionSnapshot>(`/api/projects/${projectId}/continue`, {
       method: 'POST',
       body: JSON.stringify({
         external_ai_enabled: externalAiEnabled,
+        auto_questions_enabled: autoQuestionsEnabled,
         recording_permission_confirmed: true,
       }),
     }),

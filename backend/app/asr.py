@@ -30,11 +30,17 @@ class WhisperTranscriber:
             return
         self.transcribe(np.zeros(16_000 * 3, dtype=np.float32), "warmup")
 
-    def transcribe(self, audio: np.ndarray, prompt: str) -> list[AsrSegment]:
+    def transcribe(
+        self, audio: np.ndarray, prompt: str, language: str | None = None
+    ) -> list[AsrSegment]:
         if audio.size == 0:
             return []
         # Import lazily so API/tests can start on hosts without a Metal device.
         import mlx_whisper
+
+        # SEMINAR_WHISPER_LANGUAGE overrides the preset; "auto"/empty means detect.
+        lang = os.environ.get("SEMINAR_WHISPER_LANGUAGE") or language or "auto"
+        lang = None if lang.strip().lower() in {"", "auto"} else lang.strip()
 
         with self._lock:
             self.state = "loading"
@@ -42,7 +48,7 @@ class WhisperTranscriber:
                 result = mlx_whisper.transcribe(
                     audio.astype(np.float32, copy=False),
                     path_or_hf_repo=self.model,
-                    language="en",
+                    language=lang,
                     temperature=0.0,
                     verbose=None,
                     condition_on_previous_text=True,

@@ -117,13 +117,14 @@ function SetupPanel({
   health: Health | null
   presets: SeminarPreset[]
   preferredPresetId?: string
-  onStart: (presetId: string, externalAi: boolean, deviceId: string, demo: boolean) => Promise<void>
+  onStart: (presetId: string, externalAi: boolean, autoQuestions: boolean, deviceId: string, demo: boolean) => Promise<void>
   onHistory: () => Promise<void>
   onIntake: () => void
   busy: boolean
 }) {
   const [selected, setSelected] = useState('')
   const [externalAi, setExternalAi] = useState(false)
+  const [autoQuestions, setAutoQuestions] = useState(false)
   const [consent, setConsent] = useState(false)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState('')
@@ -223,6 +224,12 @@ function SetupPanel({
             <span><strong>DeepSeek 深层判断</strong><small>每分钟发送最近 120 秒稳定转录和问题状态。</small></span>
           </label>
 
+          <label className="toggle-row">
+            <input type="checkbox" checked={autoQuestions} onChange={(event) => setAutoQuestions(event.target.checked)} />
+            <span className="toggle-control" aria-hidden="true" />
+            <span><strong>自动生成追问</strong><small>DeepSeek 判断后自动给出可现场追问的问题，可一键采纳为跟踪问题。</small></span>
+          </label>
+
           <label className="consent-row">
             <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
             <span><ShieldCheck size={17} />我已确认现场允许录音，并知悉开启 DeepSeek 后稳定转录会发送到模型服务。</span>
@@ -232,13 +239,13 @@ function SetupPanel({
             <button
               className="primary-button"
               disabled={!selected || !consent || busy || health?.whisper_state !== 'ready'}
-              onClick={() => onStart(selected, externalAi, deviceId, false)}
+              onClick={() => onStart(selected, externalAi, autoQuestions, deviceId, false)}
             >
               {busy ? <Loader2 className="spin" size={18} /> : <Mic size={18} />}
               开始录音
             </button>
             {health?.demo_enabled && (
-              <button className="secondary-button" disabled={!selected || busy} onClick={() => onStart(selected, false, '', true)}>
+              <button className="secondary-button" disabled={!selected || busy} onClick={() => onStart(selected, false, false, '', true)}>
                 <Play size={17} />载入演示
               </button>
             )}
@@ -286,7 +293,7 @@ function HistoryPanel({
   busy: boolean
   onBack: () => void
   onSelect: (projectId: string) => Promise<void>
-  onContinue: (projectId: string, externalAi: boolean, deviceId: string) => Promise<void>
+  onContinue: (projectId: string, externalAi: boolean, autoQuestions: boolean, deviceId: string) => Promise<void>
   onRejoin: (projectId: string, deviceId: string) => Promise<void>
   onAddNote: (projectId: string, text: string, audioSecond?: number | null) => Promise<void>
 }) {
@@ -294,6 +301,7 @@ function HistoryPanel({
   const [tab, setTab] = useState<HistoryTab>('audio')
   const [continueOpen, setContinueOpen] = useState(false)
   const [externalAi, setExternalAi] = useState(true)
+  const [autoQuestions, setAutoQuestions] = useState(false)
   const [consent, setConsent] = useState(false)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [deviceId, setDeviceId] = useState('')
@@ -393,11 +401,18 @@ function HistoryPanel({
                       </div>
                     </div>
                     {!isLive && (
-                      <label className="toggle-row compact-toggle">
-                        <input type="checkbox" checked={externalAi} onChange={(event) => setExternalAi(event.target.checked)} />
-                        <span className="toggle-control" aria-hidden="true" />
-                        <span><strong>DeepSeek 判断</strong><small>继续使用历史问题状态。</small></span>
-                      </label>
+                      <>
+                        <label className="toggle-row compact-toggle">
+                          <input type="checkbox" checked={externalAi} onChange={(event) => setExternalAi(event.target.checked)} />
+                          <span className="toggle-control" aria-hidden="true" />
+                          <span><strong>DeepSeek 判断</strong><small>继续使用历史问题状态。</small></span>
+                        </label>
+                        <label className="toggle-row compact-toggle">
+                          <input type="checkbox" checked={autoQuestions} onChange={(event) => setAutoQuestions(event.target.checked)} />
+                          <span className="toggle-control" aria-hidden="true" />
+                          <span><strong>自动生成追问</strong><small>判断后自动给出可追问的问题。</small></span>
+                        </label>
+                      </>
                     )}
                   </div>
                   {deviceError && <p className="inline-error"><AlertCircle size={15} />{deviceError}</p>}
@@ -407,7 +422,7 @@ function HistoryPanel({
                   </label>
                   <div className="continue-actions">
                     <button className="secondary-button" onClick={() => setContinueOpen(false)}>取消</button>
-                    <button className="primary-button" disabled={!consent || !deviceId || busy} onClick={() => (isLive ? onRejoin(detail.id, deviceId) : onContinue(detail.id, externalAi, deviceId))}>
+                    <button className="primary-button" disabled={!consent || !deviceId || busy} onClick={() => (isLive ? onRejoin(detail.id, deviceId) : onContinue(detail.id, externalAi, autoQuestions, deviceId))}>
                       {busy ? <Loader2 className="spin" size={16} /> : <Mic size={16} />}{isLive ? '回到录音界面' : '开始新阶段'}
                     </button>
                   </div>
@@ -529,6 +544,18 @@ function LiveWorkbench({
       setComposerOpen(false)
     } catch (reason) {
       setComposerError(reason instanceof Error ? reason.message : '临时问题保存失败')
+    } finally {
+      setQuestionBusy(false)
+    }
+  }
+
+  const adoptFollowup = async (text: string) => {
+    setQuestionBusy(true)
+    setComposerError('')
+    try {
+      await api.addTemporaryQuestion(snapshot.id, text, snapshot.external_ai_enabled)
+    } catch (reason) {
+      setComposerError(reason instanceof Error ? reason.message : '采纳追问失败')
     } finally {
       setQuestionBusy(false)
     }
@@ -734,7 +761,26 @@ function LiveWorkbench({
 
       <section className="followup-bar">
         <div><BrainCircuit size={18} /><span>追问候选</span></div>
-        <p>{snapshot.followups[0] || 'DeepSeek 完成问题覆盖判断后，会在这里给出最值得现场追问的一句话。'}</p>
+        {snapshot.followups.length > 0 ? (
+          <div className="followup-items">
+            {snapshot.followups.map((text) => (
+              <button
+                className="followup-item"
+                disabled={isStopped || questionBusy}
+                key={text}
+                onClick={() => adoptFollowup(text)}
+                title="采纳为跟踪问题"
+                type="button"
+              >
+                <MessageSquarePlus size={13} />{text}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p>{snapshot.auto_questions_enabled
+            ? 'DeepSeek 完成问题覆盖判断后，会在这里给出最值得现场追问的一句话。'
+            : '自动追问已关闭；开始或继续录音时可打开「自动生成追问」开关。'}</p>
+        )}
       </section>
     </main>
   )
@@ -980,12 +1026,12 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [])
 
-  const start = async (presetId: string, externalAi: boolean, deviceId: string, demo: boolean) => {
+  const start = async (presetId: string, externalAi: boolean, autoQuestions: boolean, deviceId: string, demo: boolean) => {
     setBusy(true)
     setError('')
     let created: SessionSnapshot | null = null
     try {
-      created = await api.start(presetId, externalAi)
+      created = await api.start(presetId, externalAi, autoQuestions)
       setScreen('setup')
       setSnapshot(created)
       if (demo) {
@@ -1078,12 +1124,12 @@ export default function App() {
     }
   }
 
-  const continueProject = async (projectId: string, externalAi: boolean, deviceId: string) => {
+  const continueProject = async (projectId: string, externalAi: boolean, autoQuestions: boolean, deviceId: string) => {
     setBusy(true)
     setError('')
     let created: SessionSnapshot | null = null
     try {
-      created = await api.continueProject(projectId, externalAi)
+      created = await api.continueProject(projectId, externalAi, autoQuestions)
       setSnapshot(created)
       setScreen('setup')
       const audio = await startAudioCapture(created.id, deviceId, setSnapshot, setError)

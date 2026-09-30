@@ -179,6 +179,10 @@ blockquote span { font-size: 11px; line-height: 1.5; }
 .followup-bar { min-height: 54px; display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 14px; padding: 8px 20px; background: #1f2b26; color: white; }
 .followup-bar > div { display: flex; align-items: center; gap: 8px; color: #9fd1be; font-size: 11px; font-weight: 750; }
 .followup-bar p { margin: 0; font-size: 12px; line-height: 1.45; }
+.followup-items { display: flex; flex-direction: column; gap: 6px; }
+.followup-item { display: flex; align-items: center; gap: 7px; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(159, 209, 190, 0.35); border-radius: 8px; color: white; cursor: pointer; font-size: 12px; line-height: 1.45; padding: 6px 10px; text-align: left; }
+.followup-item:hover:not(:disabled) { background: rgba(159, 209, 190, 0.2); }
+.followup-item:disabled { cursor: default; opacity: 0.6; }
 .export-button { min-height: 40px; }
 .global-error { position: fixed; right: 20px; bottom: 20px; max-width: 420px; padding: 12px 14px; border: 1px solid #e0b7b4; border-radius: 5px; background: #fff5f4; box-shadow: 0 10px 30px rgba(62, 36, 36, 0.12); z-index: 10; }
 .spin { animation: spin 900ms linear infinite; }

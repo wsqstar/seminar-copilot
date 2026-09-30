@@ -152,7 +152,7 @@ async def continue_project(
     try:
         preset_id = store.resolve_preset_id(project_id)
         session = manager.continue_project(
-            project_id, preset_id, request.external_ai_enabled
+            project_id, preset_id, request.external_ai_enabled, request.auto_questions_enabled
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="未找到历史项目") from None
@@ -263,7 +263,9 @@ async def create_session(request: StartSessionRequest) -> SessionSnapshot:
     if not request.recording_permission_confirmed:
         raise HTTPException(status_code=400, detail="请先确认已获录音许可")
     try:
-        session = manager.create(request.preset_id, request.external_ai_enabled)
+        session = manager.create(
+            request.preset_id, request.external_ai_enabled, request.auto_questions_enabled
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="未找到讲座预设") from None
     except RuntimeError as exc:

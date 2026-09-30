@@ -24,17 +24,21 @@ class SeminarPreset(BaseModel):
     date: str
     source_path: str | None = None
     glossary: list[str] = Field(default_factory=list)
+    # "auto" lets Whisper detect the language per window; or pin a code like "en"/"zh".
+    language: str = "auto"
     questions: list[QuestionDefinition]
 
 
 class StartSessionRequest(BaseModel):
     preset_id: str
     external_ai_enabled: bool = False
+    auto_questions_enabled: bool = False
     recording_permission_confirmed: bool
 
 
 class ContinueProjectRequest(BaseModel):
     external_ai_enabled: bool = False
+    auto_questions_enabled: bool = False
     recording_permission_confirmed: bool
 
 
@@ -111,6 +115,7 @@ class SessionSnapshot(BaseModel):
     asr_state: str
     analyzer_state: str
     external_ai_enabled: bool
+    auto_questions_enabled: bool = False
     recovered_sessions: list[RecoveredSessionState] = Field(default_factory=list)
     timeline_offset_seconds: float = 0.0
     transcript: list[TranscriptSegment]

@@ -49,6 +49,7 @@ class SeminarSession:
         transcriber: WhisperTranscriber,
         analyzer: DeepSeekAnalyzer,
         external_ai_enabled: bool,
+        auto_questions_enabled: bool = False,
         recovered_sources: list[RecoverySource] | None = None,
         project_id: str | None = None,
     ) -> None:
@@ -62,6 +63,7 @@ class SeminarSession:
         self.transcriber = transcriber
         self.analyzer = analyzer
         self.external_ai_enabled = external_ai_enabled
+        self.auto_questions_enabled = auto_questions_enabled
         self.status = "recording"
         self.samples = np.empty(0, dtype=np.float32)
         self.buffer_start_seconds = 0.0
@@ -163,7 +165,9 @@ class SeminarSession:
             audio = self.samples[-window_samples:].copy()
             window_start = self.elapsed_seconds - audio.size / SAMPLE_RATE
             prompt = ", ".join(self.preset.glossary)
-            segments = await asyncio.to_thread(self.transcriber.transcribe, audio, prompt)
+            segments = await asyncio.to_thread(
+                self.transcriber.transcribe, audio, prompt, self.preset.language
+            )
             stable_before = self.elapsed_seconds if final else self.elapsed_seconds - ASR_STABILITY_SECONDS
             provisional: list[str] = []
             committed_any = False
@@ -269,7 +273,8 @@ class SeminarSession:
                 source_session=self.id,
                 evidence_offset=self.timeline_offset_seconds,
             )
-            self.followups = result.followups
+            # Auto follow-up suggestions only when the explicit switch is on.
+            self.followups = result.followups if self.auto_questions_enabled else []
             self._append_jsonl(
                 self._analysis_path,
                 {
@@ -540,6 +545,7 @@ class SeminarSession:
             asr_state=self.asr_state,
             analyzer_state=self.analyzer_state,
             external_ai_enabled=self.external_ai_enabled,
+            auto_questions_enabled=self.auto_questions_enabled,
             recovered_sessions=self.recovered_sessions,
             timeline_offset_seconds=self.timeline_offset_seconds,
             transcript=self.transcript,
@@ -671,6 +677,8 @@ class SeminarSession:
             "status": self.status,
             "sample_rate": SAMPLE_RATE,
             "external_ai_enabled": self.external_ai_enabled,
+            "auto_questions_enabled": self.auto_questions_enabled,
+            "language": self.preset.language,
             "source_path": self.preset.source_path,
             "export_path": self.export_path,
             "recovered_session_ids": [item.session_id for item in self.recovered_sessions],
@@ -761,7 +769,12 @@ class SessionManager:
         self.analyzer = DeepSeekAnalyzer()
         self.sessions: dict[str, SeminarSession] = {}
 
-    def create(self, preset_id: str, external_ai_enabled: bool) -> SeminarSession:
+    def create(
+        self,
+        preset_id: str,
+        external_ai_enabled: bool,
+        auto_questions_enabled: bool = False,
+    ) -> SeminarSession:
         preset = self.presets.get(preset_id)
         if preset is None:
             raise KeyError(preset_id)
@@ -774,6 +787,7 @@ class SessionManager:
             transcriber=self.transcriber,
             analyzer=self.analyzer,
             external_ai_enabled=external_ai_enabled,
+            auto_questions_enabled=auto_questions_enabled,
             recovered_sources=recovered_sources,
             project_id=preset_id,
         )
@@ -782,7 +796,11 @@ class SessionManager:
         return session
 
     def continue_project(
-        self, project_id: str, preset_id: str, external_ai_enabled: bool
+        self,
+        project_id: str,
+        preset_id: str,
+        external_ai_enabled: bool,
+        auto_questions_enabled: bool = False,
     ) -> SeminarSession:
         preset = self.presets.get(preset_id)
         if preset is None:
@@ -797,6 +815,7 @@ class SessionManager:
             transcriber=self.transcriber,
             analyzer=self.analyzer,
             external_ai_enabled=external_ai_enabled,
+            auto_questions_enabled=auto_questions_enabled,
             recovered_sources=recovered_sources,
             project_id=project_id,
         )
