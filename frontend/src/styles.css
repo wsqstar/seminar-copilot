@@ -465,6 +465,19 @@ blockquote span { font-size: 11px; line-height: 1.5; }
   gap: 4px;
 }
 
+.quick-record-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.quick-record-hint {
+  color: #8a6d1d;
+  font-size: 12px;
+}
+
 .quick-record-copy strong {
   display: flex;
   align-items: center;

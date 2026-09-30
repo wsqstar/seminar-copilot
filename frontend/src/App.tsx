@@ -255,14 +255,22 @@ function SetupPanel({
           <strong><Zap size={16} />讲座已经开始、来不及建 Seminar？</strong>
           <small>先把内容录下来最重要。速录会独立成项目，之后可在录音页或历史项目里粘贴通知文本，自动补齐信息并回扫错过的回答。</small>
         </div>
-        <button
-          className="primary-button"
-          disabled={!consent || busy || health?.whisper_state !== 'ready'}
-          onClick={() => onStart('quick-record', externalAi, autoQuestions, deviceId, false)}
-        >
-          {busy ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}
-          立即速录
-        </button>
+        <div className="quick-record-action">
+          <button
+            className="primary-button"
+            disabled={!consent || busy || health?.whisper_state !== 'ready'}
+            onClick={() => onStart('quick-record', externalAi, autoQuestions, deviceId, false)}
+          >
+            {busy ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}
+            立即速录
+          </button>
+          {!consent && <small className="quick-record-hint">请先勾选下方「我已确认现场允许录音」</small>}
+          {consent && !busy && health?.whisper_state !== 'ready' && (
+            <small className="quick-record-hint">
+              {health?.whisper_state === 'error' ? 'Whisper 预热失败，请查看上方状态条' : 'Whisper 模型加载中，就绪后即可速录'}
+            </small>
+          )}
+        </div>
       </section>
 
       <section className="setup-grid">
