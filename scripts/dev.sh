@@ -4,11 +4,32 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT_DIR/.uv-cache}"
 
-if [[ -f "$ROOT_DIR/.env.local" ]]; then
-  set -a
-  source "$ROOT_DIR/.env.local"
-  set +a
-fi
+# 以「补默认」的方式加载 .env.local：进程环境变量（如 DSH 插件注入的
+# SEMINAR_ASR_BACKEND / DASHSCOPE_API_KEY）优先，文件只补齐缺失的键，
+# 绝不覆盖已设置的值。
+load_env_defaults() {
+  local file="$1" line key value
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    # 已在进程环境中设置的键保持原值，文件不覆盖。
+    if [[ -n "${!key+x}" ]]; then continue; fi
+    value="${line#*=}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ ( "$value" == \"*\" || "$value" == '*' ) && ${#value} -ge 2 ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    export "$key=$value"
+  done < "$file"
+}
+
+load_env_defaults "$ROOT_DIR/.env.local"
 
 if [[ -n "${SEMINAR_CREDENTIAL_ENV:-}" && -f "$SEMINAR_CREDENTIAL_ENV" ]]; then
   set -a

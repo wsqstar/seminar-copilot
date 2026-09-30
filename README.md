@@ -133,8 +133,18 @@ SEMINAR_ENABLE_DEMO=1
 SEMINAR_CREDENTIAL_ENV=/absolute/path/to/private-credentials.env
 ```
 
-`.env.local` is ignored by Git so local paths and service configuration remain
-on the machine.
+``.env.local` is ignored by Git so local paths and service configuration remain
+on the machine. Since v0.3.0 of the DSH plugin, `scripts/dev.sh` loads it as
+**defaults only**: variables already present in the process environment win,
+so the DSH plugin can inject settings per process without being overwritten.
+
+**Recommended: manage ASR settings from the DSH plugin UI instead of editing
+env files.** Install `seminar-copilot-dsh-plugin` (see `dsh-plugin/README.md`),
+open the 会议录音 tab → 识别设置, and pick the backend, DashScope API key,
+model and language there. The plugin persists them under
+`~/.dsh/seminar-copilot/config.json` (0600) and injects them as
+process-level environment variables only when it launches the stack — nothing
+is exported globally or written to shell profiles.
 
 ## Live temporary questions
 

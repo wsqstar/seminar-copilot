@@ -1,12 +1,37 @@
 {
   "name": "seminar-copilot-dsh-plugin",
-  "version": "0.2.0",
-  "private": true,
+  "version": "0.3.0",
+  "description": "DeepSeek Harness Web GUI plugin for Seminar Copilot: one-click local seminar recording, ASR backend settings (local MLX Whisper / Aliyun Bailian), auto-start of the dev stack.",
+  "license": "MIT",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "seminar-copilot",
+    "asr",
+    "whisper",
+    "dashscope",
+    "meeting-recorder"
+  ],
+  "author": "Shiqi Wang",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wsqstar/seminar-copilot.git",
+    "directory": "dsh-plugin"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dsh": {
     "bundle": {
