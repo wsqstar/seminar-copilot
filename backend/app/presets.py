@@ -17,3 +17,10 @@ def load_presets() -> dict[str, SeminarPreset]:
             raise ValueError(f"duplicate preset id: {preset.id}")
         presets[preset.id] = preset
     return presets
+
+
+def reload_presets(current: dict[str, SeminarPreset]) -> dict[str, SeminarPreset]:
+    fresh = load_presets()
+    current.clear()
+    current.update(fresh)
+    return current

@@ -29,10 +29,15 @@ import { api } from './api'
 import { listAudioInputs, startAudioCapture, type AudioCapture } from './audio'
 import type {
   Health,
+  IntakeParseResponse,
+  ParsedSeminar,
   ProjectDetail,
   ProjectSummary,
+  QuestionDefinition,
   QuestionState,
   QuestionStatus,
+  RelevanceReport,
+  ResearchSource,
   SeminarPreset,
   SessionSnapshot,
 } from './types'
@@ -103,14 +108,18 @@ function QuestionCard({ question, currentSessionId }: { question: QuestionState;
 function SetupPanel({
   health,
   presets,
+  preferredPresetId,
   onStart,
   onHistory,
+  onIntake,
   busy,
 }: {
   health: Health | null
   presets: SeminarPreset[]
+  preferredPresetId?: string
   onStart: (presetId: string, externalAi: boolean, deviceId: string, demo: boolean) => Promise<void>
   onHistory: () => Promise<void>
+  onIntake: () => void
   busy: boolean
 }) {
   const [selected, setSelected] = useState('')
@@ -121,8 +130,12 @@ function SetupPanel({
   const [deviceError, setDeviceError] = useState('')
 
   useEffect(() => {
+    if (preferredPresetId && presets.some((item) => item.id === preferredPresetId)) {
+      setSelected(preferredPresetId)
+      return
+    }
     if (!selected && presets[0]) setSelected(presets[0].id)
-  }, [presets, selected])
+  }, [presets, selected, preferredPresetId])
 
   const inspectMicrophones = async () => {
     setDeviceError('')
@@ -157,9 +170,14 @@ function SetupPanel({
                 ? 'Whisper 预热失败'
               : 'Whisper 预热中'}
         </div>
-        <button className="icon-text-button header-history-button" onClick={onHistory} type="button">
-          <Archive size={16} />历史项目
-        </button>
+        <div className="header-actions">
+          <button className="icon-text-button" onClick={onIntake} type="button">
+            <Plus size={16} />新建 Seminar
+          </button>
+          <button className="icon-text-button header-history-button" onClick={onHistory} type="button">
+            <Archive size={16} />历史项目
+          </button>
+        </div>
       </header>
 
       <section className="setup-grid">
@@ -260,6 +278,7 @@ function HistoryPanel({
   onBack,
   onSelect,
   onContinue,
+  onRejoin,
   onAddNote,
 }: {
   projects: ProjectSummary[]
@@ -268,8 +287,10 @@ function HistoryPanel({
   onBack: () => void
   onSelect: (projectId: string) => Promise<void>
   onContinue: (projectId: string, externalAi: boolean, deviceId: string) => Promise<void>
+  onRejoin: (projectId: string, deviceId: string) => Promise<void>
   onAddNote: (projectId: string, text: string, audioSecond?: number | null) => Promise<void>
 }) {
+  const isLive = detail?.status === 'recording'
   const [tab, setTab] = useState<HistoryTab>('audio')
   const [continueOpen, setContinueOpen] = useState(false)
   const [externalAi, setExternalAi] = useState(true)
@@ -354,8 +375,8 @@ function HistoryPanel({
                 <button
                   className="primary-button"
                   onClick={() => setContinueOpen((value) => !value)}
-                  disabled={detail.status === 'recording' || busy}
-                ><Mic size={16} />继续录音</button>
+                  disabled={busy}
+                ><Mic size={16} />{isLive ? '回到录音' : '继续录音'}</button>
               </header>
 
               {continueOpen && (
@@ -371,21 +392,23 @@ function HistoryPanel({
                         <button className="icon-button" onClick={inspectMicrophones} title="检测麦克风"><RefreshCw size={17} /></button>
                       </div>
                     </div>
-                    <label className="toggle-row compact-toggle">
-                      <input type="checkbox" checked={externalAi} onChange={(event) => setExternalAi(event.target.checked)} />
-                      <span className="toggle-control" aria-hidden="true" />
-                      <span><strong>DeepSeek 判断</strong><small>继续使用历史问题状态。</small></span>
-                    </label>
+                    {!isLive && (
+                      <label className="toggle-row compact-toggle">
+                        <input type="checkbox" checked={externalAi} onChange={(event) => setExternalAi(event.target.checked)} />
+                        <span className="toggle-control" aria-hidden="true" />
+                        <span><strong>DeepSeek 判断</strong><small>继续使用历史问题状态。</small></span>
+                      </label>
+                    )}
                   </div>
                   {deviceError && <p className="inline-error"><AlertCircle size={15} />{deviceError}</p>}
                   <label className="consent-row compact-consent">
                     <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-                    <span><ShieldCheck size={16} />我已确认本次继续录音获得许可，并核对了麦克风。</span>
+                    <span><ShieldCheck size={16} />我已确认本次{isLive ? '回到录音' : '继续录音'}获得许可，并核对了麦克风。</span>
                   </label>
                   <div className="continue-actions">
                     <button className="secondary-button" onClick={() => setContinueOpen(false)}>取消</button>
-                    <button className="primary-button" disabled={!consent || !deviceId || busy} onClick={() => onContinue(detail.id, externalAi, deviceId)}>
-                      {busy ? <Loader2 className="spin" size={16} /> : <Mic size={16} />}开始新阶段
+                    <button className="primary-button" disabled={!consent || !deviceId || busy} onClick={() => (isLive ? onRejoin(detail.id, deviceId) : onContinue(detail.id, externalAi, deviceId))}>
+                      {busy ? <Loader2 className="spin" size={16} /> : <Mic size={16} />}{isLive ? '回到录音界面' : '开始新阶段'}
                     </button>
                   </div>
                 </section>
@@ -717,6 +740,222 @@ function LiveWorkbench({
   )
 }
 
+type IntakeStage = 'paste' | 'review'
+
+const relevanceLabel = (score: number) => {
+  if (score <= 0) return '未评估'
+  if (score <= 2) return '弱相关'
+  if (score <= 3) return '中等相关'
+  return '高度相关'
+}
+
+function IntakePanel({
+  onBack,
+  onSaved,
+}: {
+  onBack: () => void
+  onSaved: (presetId: string) => Promise<void>
+}) {
+  const [stage, setStage] = useState<IntakeStage>('paste')
+  const [rawText, setRawText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [parsed, setParsed] = useState<ParsedSeminar | null>(null)
+  const [relevance, setRelevance] = useState<RelevanceReport | null>(null)
+  const [sources, setSources] = useState<ResearchSource[]>([])
+  const [researchNotes, setResearchNotes] = useState<string[]>([])
+  const [questions, setQuestions] = useState<QuestionDefinition[]>([])
+  const [questionMethod, setQuestionMethod] = useState<'deepseek' | 'none'>('none')
+
+  const parse = async () => {
+    if (rawText.trim().length < 20) {
+      setError('请粘贴完整的 Seminar 通告（至少 20 个字符）')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api.intakeParse(rawText)
+      setParsed(result.parsed)
+      setRelevance(result.relevance)
+      setSources(result.research_sources)
+      setResearchNotes(result.research_notes)
+      setQuestions(result.questions)
+      setQuestionMethod(result.question_method)
+      setStage('review')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '解析失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const updateQuestion = (index: number, patch: Partial<QuestionDefinition>) => {
+    setQuestions((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)))
+  }
+
+  const addQuestion = () => {
+    setQuestions((rows) => [...rows, { id: `q${rows.length + 1}-manual`, question: '', why_it_matters: '', keywords: [], expected_slots: [] }])
+  }
+
+  const confirm = async () => {
+    if (!parsed || !relevance) return
+    const valid = questions.filter((question) => question.question.trim())
+    if (valid.length === 0) {
+      setError('至少保留一个备讲问题')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api.intakeConfirm({
+        parsed,
+        relevance,
+        research_sources: sources,
+        research_notes: researchNotes,
+        raw_text: rawText,
+        glossary: parsed.topic_keywords,
+        questions: valid.map((question, index) => ({ ...question, id: `q${index + 1}` })),
+      })
+      await onSaved(result.preset_id)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '保存失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="setup-shell intake-shell">
+      <header className="app-header setup-header">
+        <button className="icon-button compact" onClick={onBack} title="返回设置"><ChevronLeft size={18} /></button>
+        <div>
+          <p className="eyebrow">SEMINAR INTAKE</p>
+          <h1>新建 Seminar</h1>
+        </div>
+      </header>
+
+      {stage === 'paste' && (
+        <section className="intake-paste">
+          <div className="section-title">
+            <span>01</span>
+            <div><h2>粘贴通告</h2><p>粘贴 Seminar 邮件或网页通告全文，系统会解析演讲者、检查与你的研究的相关性、检索文献并生成备讲问题。</p></div>
+          </div>
+          <textarea
+            value={rawText}
+            onChange={(event) => setRawText(event.target.value)}
+            rows={12}
+            placeholder="粘贴包含题目、演讲者、时间、摘要的完整通告…"
+            autoFocus
+          />
+          {error && <p className="inline-error"><AlertCircle size={15} />{error}</p>}
+          <div className="setup-actions">
+            <button className="primary-button" onClick={parse} disabled={busy || rawText.trim().length < 20}>
+              {busy ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+              解析并检索
+            </button>
+          </div>
+        </section>
+      )}
+
+      {stage === 'review' && parsed && relevance && (
+        <section className="intake-review">
+          <div className="section-title">
+            <span>02</span>
+            <div><h2>审阅并录入</h2><p>核对解析结果，编辑备讲问题后保存；保存后即可在设置页选择该讲座开始录音。</p></div>
+          </div>
+
+          <div className="intake-fields">
+            <div>
+              <label className="field-label" htmlFor="intake-title">题目</label>
+              <input id="intake-title" value={parsed.title} onChange={(event) => setParsed({ ...parsed, title: event.target.value })} />
+            </div>
+            <div className="intake-field-row">
+              <div>
+                <label className="field-label" htmlFor="intake-speaker">演讲者</label>
+                <input id="intake-speaker" value={parsed.speaker} onChange={(event) => setParsed({ ...parsed, speaker: event.target.value })} />
+              </div>
+              <div>
+                <label className="field-label" htmlFor="intake-date">日期</label>
+                <input id="intake-date" value={parsed.date} onChange={(event) => setParsed({ ...parsed, date: event.target.value })} placeholder="YYYY-MM-DD" />
+              </div>
+            </div>
+            {parsed.speaker_affiliation && (
+              <p className="intake-affiliation">{parsed.speaker_affiliation}</p>
+            )}
+            {parsed.abstract && <p className="intake-abstract">{parsed.abstract}</p>}
+          </div>
+
+          <div className={`intake-relevance score-${Math.min(5, Math.max(1, relevance.score))}`}>
+            <div><Sparkles size={15} /><strong>与我研究的相关性：{relevanceLabel(relevance.score)}</strong></div>
+            <p>{relevance.summary || '尚未填写研究方向画像（backend/config/research_profile.md）。'}</p>
+            {relevance.overlap_directions.length > 0 && (
+              <small>重叠方向：{relevance.overlap_directions.join('；')}</small>
+            )}
+          </div>
+
+          {sources.length > 0 && (
+            <div className="intake-sources">
+              <div><Search size={15} /><strong>相关文献（OpenAlex / Crossref）</strong></div>
+              {sources.map((source, index) => (
+                source.url
+                  ? <a href={source.url} target="_blank" rel="noreferrer" key={`${source.source_type}-${index}`}>{source.title}{source.year ? ` · ${source.year}` : ''}</a>
+                  : <span key={`${source.source_type}-${index}`}>{source.title}{source.year ? ` · ${source.year}` : ''}</span>
+              ))}
+            </div>
+          )}
+          {researchNotes.length > 0 && <p className="intake-notes">{researchNotes.join('；')}</p>}
+
+          <div className="intake-questions">
+            <div className="intake-questions-heading">
+              <h3>备讲问题（{questions.length}）</h3>
+              <button className="secondary-button" onClick={addQuestion} type="button"><Plus size={15} />新增问题</button>
+            </div>
+            {questionMethod === 'none' && questions.length === 0 && (
+              <p className="intake-notes">未配置 DeepSeek（dsh），无法自动生成问题；请手动新增备讲问题。</p>
+            )}
+            {questions.map((question, index) => (
+              <div className="intake-question-card" key={question.id}>
+                <div className="intake-question-tools">
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <button className="icon-button compact" title="删除问题" onClick={() => setQuestions((rows) => rows.filter((_, i) => i !== index))}>
+                    <X size={15} />
+                  </button>
+                </div>
+                <textarea
+                  value={question.question}
+                  onChange={(event) => updateQuestion(index, { question: event.target.value })}
+                  rows={2}
+                  placeholder="用中文写一个具体到可以当场提出的问题…"
+                />
+                <input
+                  value={question.why_it_matters}
+                  onChange={(event) => updateQuestion(index, { why_it_matters: event.target.value })}
+                  placeholder="为什么值得问（可选）"
+                />
+                <input
+                  value={question.keywords.join(', ')}
+                  onChange={(event) => updateQuestion(index, { keywords: event.target.value.split(/[,，]/).map((item) => item.trim()).filter(Boolean) })}
+                  placeholder="关键词（逗号分隔，用于现场匹配）"
+                />
+              </div>
+            ))}
+          </div>
+
+          {error && <p className="inline-error"><AlertCircle size={15} />{error}</p>}
+          <div className="setup-actions">
+            <button className="secondary-button" onClick={() => setStage('paste')} disabled={busy}>返回修改</button>
+            <button className="primary-button" onClick={confirm} disabled={busy}>
+              {busy ? <Loader2 className="spin" size={18} /> : <Check size={18} />}
+              保存并录入
+            </button>
+          </div>
+        </section>
+      )}
+    </main>
+  )
+}
+
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null)
   const [presets, setPresets] = useState<SeminarPreset[]>([])
@@ -724,7 +963,8 @@ export default function App() {
   const [capture, setCapture] = useState<AudioCapture | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [screen, setScreen] = useState<'setup' | 'history'>('setup')
+  const [screen, setScreen] = useState<'setup' | 'history' | 'intake'>('setup')
+  const [preferredPresetId, setPreferredPresetId] = useState<string | undefined>(undefined)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(null)
 
@@ -858,6 +1098,26 @@ export default function App() {
     }
   }
 
+  const rejoinProject = async (projectId: string, deviceId: string) => {
+    setBusy(true)
+    setError('')
+    try {
+      const active = await api.activeSession(projectId)
+      setSnapshot(active)
+      setScreen('setup')
+      const audio = await startAudioCapture(active.id, deviceId, setSnapshot, setError)
+      setCapture(audio)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '回到录音失败')
+      setSnapshot(null)
+      const [rows, refreshed] = await Promise.all([api.projects(), api.project(projectId)])
+      setProjects(rows)
+      setProjectDetail(refreshed)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const addProjectNote = async (projectId: string, text: string, audioSecond?: number | null) => {
     await api.addProjectNote(projectId, text, audioSecond)
     if (screen === 'history' && projectDetail?.id === projectId) {
@@ -880,12 +1140,24 @@ export default function App() {
       onBack={() => { setScreen('setup'); setProjectDetail(null) }}
       onSelect={selectProject}
       onContinue={continueProject}
+      onRejoin={rejoinProject}
       onAddNote={addProjectNote}
     />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
   }
 
+  if (!snapshot && screen === 'intake') {
+    return <><IntakePanel
+      onBack={() => setScreen('setup')}
+      onSaved={async (presetId) => {
+        setPresets(await api.presets())
+        setPreferredPresetId(presetId)
+        setScreen('setup')
+      }}
+    />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
+  }
+
   if (!snapshot) {
-    return <><SetupPanel health={health} presets={presets} onStart={start} onHistory={openHistory} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
+    return <><SetupPanel health={health} presets={presets} preferredPresetId={preferredPresetId} onStart={start} onHistory={openHistory} onIntake={() => { setError(''); setScreen('intake') }} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
   }
 
   return <><LiveWorkbench snapshot={snapshot} onStop={stop} onAnalyze={analyze} onExport={exportNotes} onHistory={openHistory} onAddNote={addLiveNote} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>

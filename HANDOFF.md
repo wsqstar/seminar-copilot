@@ -27,6 +27,12 @@ and exports an evidence-linked Markdown note.
   or completed project without overwriting prior recordings.
 - Manual notes are append-only project records and can be timestamped from the
   live recording or added during later review.
+- Paste-based intake: pasting a seminar announcement parses the speaker, title,
+  and date (dsh with a heuristic fallback), scores relevance against
+  `backend/config/research_profile.md`, searches OpenAlex/Crossref for the
+  speaker and topic, proposes reviewable questions, then writes a preset JSON,
+  a dossier under `data/dossiers/<preset_id>/`, and reloads presets without a
+  restart. Nothing is written until the user confirms the review screen.
 
 ## Deferred
 
@@ -62,6 +68,9 @@ and exports an evidence-linked Markdown note.
 - [done] The history UI builds with project selection, four evidence views,
   explicit microphone selection for continuation, and live timestamped notes
   on 2026-09-09.
+- [done] Intake tests cover heuristic parsing, keyword relevance, unique and
+  safe preset ids, preset+dossier persistence, and preset reload; the
+  frontend production build succeeds with the intake screen on 2026-09-09.
 
 ## Next checkpoint
 

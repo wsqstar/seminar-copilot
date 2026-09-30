@@ -62,6 +62,27 @@ For a room lecture, select the laptop microphone. For an online meeting, select
 a legal system-audio loopback input such as a preconfigured BlackHole device;
 the browser cannot capture speaker output through the microphone API alone.
 
+## Paste-based seminar intake
+
+Open `新建 Seminar` from the setup screen and paste the full announcement
+email or webpage text. The intake pipeline then:
+
+1. Parses the speaker, affiliation, title, date, and abstract (dsh when
+   configured, otherwise a local heuristic).
+2. Scores how the seminar relates to your own directions using
+   `backend/config/research_profile.md` (a template is created on first run;
+   fill it in for meaningful scores).
+3. Searches OpenAlex/Crossref for the speaker's works and the topic.
+4. Proposes 4-6 Chinese prepared questions for review.
+
+The review screen lets you correct parsed fields and edit, delete, or add
+questions. `保存并录入` writes a preset JSON under `backend/config/seminars/`,
+persists an auditable dossier (raw text, parse, relevance, sources) under
+`data/dossiers/<preset-id>/`, and hot-reloads presets so the new seminar is
+immediately selectable for recording. Nothing is written before you confirm.
+Without `dsh`, the flow degrades to local parsing plus keyword relevance and
+manually entered questions.
+
 ## Historical projects and continued recording
 
 Open `历史项目` from the setup screen to revisit each complete seminar. A

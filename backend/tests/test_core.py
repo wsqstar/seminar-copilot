@@ -297,3 +297,106 @@ def test_project_history_groups_phases_and_persists_notes(tmp_path: Path) -> Non
         await continued.stop()
 
     asyncio.run(continue_scenario())
+
+
+ANNOUNCEMENT = """Department of Geography Seminar
+
+Speaker: Dr. Maria Chen, University of Chicago
+Date: 2026-09-12 14:00
+Title: Generative urban form: learning street networks from sparse data
+
+Abstract: We study how generative models can synthesize plausible street
+networks for cities with incomplete road data, evaluating reconstruction
+quality against travel-flow benchmarks.
+"""
+
+
+def test_heuristic_parse_extracts_speaker_title_and_date() -> None:
+    from app.intake import parse_announcement_heuristic
+
+    parsed = parse_announcement_heuristic(ANNOUNCEMENT)
+    assert parsed.speaker == "Dr. Maria Chen"
+    assert "University of Chicago" in parsed.speaker_affiliation
+    assert parsed.date == "2026-09-12"
+    assert parsed.parse_method == "heuristic"
+
+
+def test_keyword_relevance_scores_overlap(tmp_path, monkeypatch) -> None:
+    from app import intake
+
+    parsed = intake.ParsedSeminar(
+        title="Generative urban street networks",
+        abstract="generative models street networks cities",
+    )
+    report = intake.assess_relevance_keyword(
+        parsed, "# profile\n- generative models for street networks\n"
+    )
+    assert report.method == "keyword"
+    assert report.overlap_directions
+
+
+def test_build_preset_id_is_unique_and_safe() -> None:
+    from app.intake import build_preset_id, validate_preset_id
+
+    first = build_preset_id("Maria Chen", "Generative Urban Form", "2026-09-12", set())
+    assert validate_preset_id(first)
+    second = build_preset_id("Maria Chen", "Generative Urban Form", "2026-09-12", {first})
+    assert first != second
+    assert validate_preset_id(second)
+
+
+def test_confirm_writes_preset_and_dossier(tmp_path, monkeypatch) -> None:
+    from app import intake
+    from app.models import (
+        IntakeConfirmRequest,
+        ParsedSeminar,
+        QuestionDefinition,
+        RelevanceReport,
+    )
+
+    monkeypatch.setattr(intake, "DATA_DIR", tmp_path / "data")
+    config_dir = tmp_path / "seminars"
+    config_dir.mkdir()
+    request = IntakeConfirmRequest(
+        parsed=ParsedSeminar(
+            title="Generative Urban Form",
+            speaker="Maria Chen",
+            date="2026-09-12",
+        ),
+        relevance=RelevanceReport(score=3, summary="overlap"),
+        raw_text=ANNOUNCEMENT,
+        questions=[
+            QuestionDefinition(id="q1", question="如何评估生成的街道网络?", keywords=["street"])
+        ],
+    )
+    preset_id = intake.build_preset_id("Maria Chen", "Generative Urban Form", "2026-09-12", set())
+    preset_path = intake.write_intake_preset(request, preset_id, config_dir)
+    dossier_path = intake.write_dossier(request, preset_id, tmp_path / "data")
+
+    preset = SeminarPreset.model_validate(
+        json.loads(preset_path.read_text(encoding="utf-8"))
+    )
+    assert preset.id == preset_id
+    assert preset.speaker == "Maria Chen"
+    dossier = json.loads(dossier_path.read_text(encoding="utf-8"))
+    assert dossier["raw_text"] == ANNOUNCEMENT
+    assert dossier["relevance"]["score"] == 3
+
+
+def test_preset_reload_picks_up_new_file(monkeypatch, tmp_path) -> None:
+    from app import intake
+    from app.models import IntakeConfirmRequest, ParsedSeminar, QuestionDefinition
+    from app.presets import reload_presets
+
+    current: dict = {}
+    request = IntakeConfirmRequest(
+        parsed=ParsedSeminar(title="New Talk", speaker="Ann Lee", date="2026-09-13"),
+        questions=[QuestionDefinition(id="q1", question="问题?")],
+    )
+    preset_id = intake.build_preset_id("Ann Lee", "New Talk", "2026-09-13", set(current))
+    config_dir = tmp_path / "seminars"
+    config_dir.mkdir()
+    intake.write_intake_preset(request, preset_id, config_dir)
+    monkeypatch.setattr("app.presets.CONFIG_DIR", config_dir)
+    reload_presets(current)
+    assert preset_id in current

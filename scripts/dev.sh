@@ -16,6 +16,19 @@ if [[ -n "${SEMINAR_CREDENTIAL_ENV:-}" && -f "$SEMINAR_CREDENTIAL_ENV" ]]; then
   set +a
 fi
 
+# huggingface_hub builds an httpx client from the proxy environment at
+# import time; bracketed IPv6 entries such as "[::1]" in NO_PROXY crash that
+# parsing with "Invalid port". Strip bracketed entries for this app only.
+sanitize_no_proxy() {
+  printf '%s' "$1" | tr ',' '\n' | grep -vE '^\[.*\]$' | paste -sd, -
+}
+if [[ -n "${NO_PROXY:-}" ]]; then
+  export NO_PROXY="$(sanitize_no_proxy "$NO_PROXY")"
+fi
+if [[ -n "${no_proxy:-}" ]]; then
+  export no_proxy="$(sanitize_no_proxy "$no_proxy")"
+fi
+
 cleanup() {
   kill "$BACKEND_PID" "$FRONTEND_PID" 2>/dev/null || true
 }

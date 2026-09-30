@@ -1,4 +1,4 @@
-import type { Health, ProjectDetail, ProjectNote, ProjectSummary, SeminarPreset, SessionSnapshot } from './types'
+import type { Health, IntakeConfirmPayload, IntakeParseResponse, ProjectDetail, ProjectNote, ProjectSummary, SeminarPreset, SessionSnapshot } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -15,6 +15,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<Health>('/api/health'),
   presets: () => request<SeminarPreset[]>('/api/presets'),
+  intakeParse: (text: string) =>
+    request<IntakeParseResponse>('/api/intake/parse', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+  intakeConfirm: (payload: IntakeConfirmPayload) =>
+    request<{ preset_id: string }>('/api/intake/confirm', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   projects: () => request<ProjectSummary[]>('/api/projects'),
   project: (projectId: string) => request<ProjectDetail>(`/api/projects/${projectId}`),
   start: (presetId: string, externalAiEnabled: boolean) =>
@@ -35,6 +45,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ draft, search_external: searchExternal }),
     }),
+  activeSession: (projectId: string) =>
+    request<SessionSnapshot>(`/api/projects/${projectId}/active-session`),
   continueProject: (projectId: string, externalAiEnabled: boolean) =>
     request<SessionSnapshot>(`/api/projects/${projectId}/continue`, {
       method: 'POST',

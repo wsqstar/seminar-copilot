@@ -14,6 +14,10 @@ from fastapi.responses import StreamingResponse
 from .models import (
     ContinueProjectRequest,
     ExportResponse,
+    IntakeConfirmRequest,
+    IntakeConfirmResponse,
+    IntakeParseRequest,
+    IntakeParseResponse,
     ProjectDetail,
     ProjectNote,
     ProjectNoteRequest,
@@ -23,7 +27,8 @@ from .models import (
     StartSessionRequest,
     TemporaryQuestionRequest,
 )
-from .presets import load_presets
+from . import intake
+from .presets import CONFIG_DIR, load_presets, reload_presets
 from .projects import ProjectStore
 from .session import SessionManager
 
@@ -72,6 +77,48 @@ def get_presets() -> list[SeminarPreset]:
     return list(presets.values())
 
 
+@app.post("/api/intake/parse", response_model=IntakeParseResponse)
+async def intake_parse(request: IntakeParseRequest) -> IntakeParseResponse:
+    parsed = await intake.parse_announcement(request.text)
+    relevance = await intake.assess_relevance(parsed)
+    speaker_sources, speaker_notes = intake.search_speaker_works(
+        parsed.speaker, parsed.speaker_affiliation
+    )
+    topic_sources, topic_notes = intake.search_topic_works(parsed)
+    sources = list(speaker_sources) + [
+        source
+        for source in topic_sources
+        if source.title.lower() not in {s.title.lower() for s in speaker_sources}
+    ]
+    questions = await intake.propose_questions(parsed, relevance, sources)
+    return IntakeParseResponse(
+        parsed=parsed,
+        relevance=relevance,
+        research_sources=sources,
+        research_notes=speaker_notes + topic_notes,
+        questions=questions,
+        question_method="deepseek" if questions else "none",
+    )
+
+
+@app.post("/api/intake/confirm", response_model=IntakeConfirmResponse)
+def intake_confirm(request: IntakeConfirmRequest) -> IntakeConfirmResponse:
+    if not request.questions:
+        raise HTTPException(status_code=400, detail="至少需要一个备讲问题")
+    preset_id = intake.build_preset_id(
+        request.parsed.speaker,
+        request.parsed.title,
+        request.parsed.date,
+        set(presets),
+    )
+    if not intake.validate_preset_id(preset_id):
+        raise HTTPException(status_code=400, detail="无法生成合法的讲座标识")
+    intake.write_intake_preset(request, preset_id, CONFIG_DIR)
+    intake.write_dossier(request, preset_id, intake.DATA_DIR)
+    reload_presets(presets)
+    return IntakeConfirmResponse(preset_id=preset_id)
+
+
 @app.get("/api/projects", response_model=list[ProjectSummary])
 def get_projects() -> list[ProjectSummary]:
     return project_store().list_projects()
@@ -83,6 +130,16 @@ def get_project(project_id: str) -> ProjectDetail:
         return project_store().get_project(project_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="未找到历史项目") from None
+
+
+@app.get("/api/projects/{project_id}/active-session", response_model=SessionSnapshot)
+def active_session_for_project(project_id: str) -> SessionSnapshot:
+    """Return the in-memory live session for a project so a refreshed browser
+    can rejoin the recording instead of hitting a dead end."""
+    for session in manager.sessions.values():
+        if session.project_id == project_id and session.status in {"recording", "stopping"}:
+            return session.snapshot()
+    raise HTTPException(status_code=404, detail="该项目没有正在进行的录音")
 
 
 @app.post("/api/projects/{project_id}/continue", response_model=SessionSnapshot)

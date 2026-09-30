@@ -49,7 +49,7 @@ class Evidence(BaseModel):
 
 
 class ResearchSource(BaseModel):
-    source_type: Literal["transcript", "openalex", "crossref"]
+    source_type: Literal["transcript", "openalex", "crossref", "openalex_author"]
     title: str
     url: str | None = None
     authors: list[str] = Field(default_factory=list)
@@ -180,3 +180,47 @@ class ProjectDetail(ProjectSummary):
     transcript: list[HistoricalTranscriptSegment]
     questions: list[QuestionState]
     notes: list[ProjectNote]
+
+
+class IntakeParseRequest(BaseModel):
+    text: str = Field(min_length=20, max_length=20000)
+
+
+class ParsedSeminar(BaseModel):
+    title: str = ""
+    speaker: str = ""
+    speaker_affiliation: str = ""
+    date: str = ""
+    abstract: str = ""
+    topic_keywords: list[str] = Field(default_factory=list)
+    parse_method: Literal["deepseek", "heuristic"] = "heuristic"
+
+
+class RelevanceReport(BaseModel):
+    score: int = Field(default=0, ge=0, le=5)
+    summary: str = ""
+    overlap_directions: list[str] = Field(default_factory=list)
+    method: Literal["deepseek", "keyword"] = "keyword"
+
+
+class IntakeParseResponse(BaseModel):
+    parsed: ParsedSeminar
+    relevance: RelevanceReport
+    research_sources: list[ResearchSource] = Field(default_factory=list)
+    research_notes: list[str] = Field(default_factory=list)
+    questions: list[QuestionDefinition] = Field(default_factory=list)
+    question_method: Literal["deepseek", "none"] = "none"
+
+
+class IntakeConfirmRequest(BaseModel):
+    parsed: ParsedSeminar
+    relevance: RelevanceReport = RelevanceReport()
+    research_sources: list[ResearchSource] = Field(default_factory=list)
+    research_notes: list[str] = Field(default_factory=list)
+    raw_text: str = Field(default="", max_length=20000)
+    glossary: list[str] = Field(default_factory=list)
+    questions: list[QuestionDefinition]
+
+
+class IntakeConfirmResponse(BaseModel):
+    preset_id: str

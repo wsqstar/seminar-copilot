@@ -304,3 +304,140 @@ blockquote span { font-size: 11px; line-height: 1.5; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* Seminar intake (paste-and-prepare) */
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.intake-paste textarea,
+.intake-question-card textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  font: inherit;
+  resize: vertical;
+}
+
+.intake-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.intake-fields input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.intake-field-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+
+.intake-affiliation,
+.intake-abstract,
+.intake-notes {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.intake-abstract {
+  white-space: pre-wrap;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.intake-relevance {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.intake-relevance div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.intake-relevance.score-4,
+.intake-relevance.score-5 {
+  border-left-color: var(--green);
+}
+
+.intake-relevance.score-3 {
+  border-left-color: var(--amber);
+}
+
+.intake-relevance small,
+.intake-sources small {
+  color: var(--muted);
+}
+
+.intake-sources {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.intake-sources div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.intake-questions-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.intake-question-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.intake-question-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.intake-question-card input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.intake-review {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 720px;
+}
+
+@media (max-width: 560px) {
+  .intake-field-row {
+    grid-template-columns: 1fr;
+  }
+}

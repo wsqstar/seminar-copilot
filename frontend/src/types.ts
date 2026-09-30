@@ -56,7 +56,7 @@ export interface QuestionState {
 }
 
 export interface ResearchSource {
-  source_type: 'transcript' | 'openalex' | 'crossref'
+  source_type: 'transcript' | 'openalex' | 'crossref' | 'openalex_author'
   title: string
   url?: string | null
   authors: string[]
@@ -157,4 +157,40 @@ export interface ProjectDetail extends ProjectSummary {
   transcript: HistoricalTranscriptSegment[]
   questions: QuestionState[]
   notes: ProjectNote[]
+}
+
+export interface ParsedSeminar {
+  title: string
+  speaker: string
+  speaker_affiliation: string
+  date: string
+  abstract: string
+  topic_keywords: string[]
+  parse_method: 'deepseek' | 'heuristic'
+}
+
+export interface RelevanceReport {
+  score: number
+  summary: string
+  overlap_directions: string[]
+  method: 'deepseek' | 'keyword'
+}
+
+export interface IntakeParseResponse {
+  parsed: ParsedSeminar
+  relevance: RelevanceReport
+  research_sources: ResearchSource[]
+  research_notes: string[]
+  questions: QuestionDefinition[]
+  question_method: 'deepseek' | 'none'
+}
+
+export interface IntakeConfirmPayload {
+  parsed: ParsedSeminar
+  relevance: RelevanceReport
+  research_sources: ResearchSource[]
+  research_notes: string[]
+  raw_text: string
+  glossary: string[]
+  questions: QuestionDefinition[]
 }
