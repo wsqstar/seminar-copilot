@@ -96,19 +96,26 @@ and exports an evidence-linked Markdown note.
 
 ## DSH plugin (2026-10)
 
-- [done] `dsh-plugin/` is an external dynamic DSH web client plugin: it adds a
+- [done] `dsh-plugin/` is an external dynamic DSH plugin (host + client): it adds a
   "会议录音" guide entry below "新建终端" on the right-sidebar start page, opens
   a sidebar tab embedding `http://127.0.0.1:5173`, and probes
   `http://127.0.0.1:8765/api/health` with no-cors before showing the iframe.
-  When the service is offline it shows the `scripts/dev.sh` start command with
-  copy/retry actions. `keepMounted: true` keeps the recording iframe mounted
-  across tab and session switches.
+  `keepMounted: true` keeps the recording iframe mounted across tab and
+  session switches.
+- [done] v0.2.0 auto-start: the host half serves a loopback-only control endpoint
+  on `127.0.0.1:8766` (`GET /status`, `POST /start`). When the tab opens and
+  the stack is down, the client asks the endpoint to spawn `scripts/dev.sh`
+  (detached process group, log at `/tmp/seminar-copilot-dev.log`), shows a
+  starting state, polls until healthy, then loads the iframe. Externally running
+  instances are adopted, never duplicated; the DSH host SIGTERMs only the
+  process group it spawned. Verified end-to-end with a mock cordis context:
+  /start spawned dev.sh and both ports went healthy within seconds.
 - Install: `pnpm dsh plugin --profile web add file:<repo>/dsh-plugin` from the
-  DSH checkout; a web GUI restart is required after adding or removing the
-  package. Uninstall/manage from Settings → 内置插件.
-- The backend and frontend still start manually via `scripts/dev.sh`; the
-  plugin only probes and hints. Possible v2: FastAPI serves `frontend/dist`
-  (single port) and the host half auto-spawns the dev script.
+  DSH checkout. `file:` deps are copies, not symlinks — after editing
+  `dsh-plugin/`, re-sync into `~/.dsh/profiles/web/node_modules/seminar-copilot-dsh-plugin/`.
+  Host-side changes require a web GUI restart. Uninstall from Settings → 内置插件.
+- Possible v2: FastAPI serves `frontend/dist` (single port 8765), and a
+  close-handler warns before closing a tab with an active recording.
 
 ## Next checkpoint
 
