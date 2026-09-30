@@ -1,0 +1,3 @@
+- insert:
+    - id: seminar-copilot
+      name: 'seminar-copilot-dsh-plugin'

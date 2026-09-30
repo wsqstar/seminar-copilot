@@ -94,6 +94,22 @@ and exports an evidence-linked Markdown note.
   safe preset ids, preset+dossier persistence, and preset reload; the
   frontend production build succeeds with the intake screen on 2026-09-09.
 
+## DSH plugin (2026-10)
+
+- [done] `dsh-plugin/` is an external dynamic DSH web client plugin: it adds a
+  "会议录音" guide entry below "新建终端" on the right-sidebar start page, opens
+  a sidebar tab embedding `http://127.0.0.1:5173`, and probes
+  `http://127.0.0.1:8765/api/health` with no-cors before showing the iframe.
+  When the service is offline it shows the `scripts/dev.sh` start command with
+  copy/retry actions. `keepMounted: true` keeps the recording iframe mounted
+  across tab and session switches.
+- Install: `pnpm dsh plugin --profile web add file:<repo>/dsh-plugin` from the
+  DSH checkout; a web GUI restart is required after adding or removing the
+  package. Uninstall/manage from Settings → 内置插件.
+- The backend and frontend still start manually via `scripts/dev.sh`; the
+  plugin only probes and hints. Possible v2: FastAPI serves `frontend/dist`
+  (single port) and the host half auto-spawns the dev script.
+
 ## Next checkpoint
 
 - Run `./scripts/dev.sh` at least two minutes before the lecture so the selected
