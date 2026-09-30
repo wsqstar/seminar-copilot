@@ -4,7 +4,10 @@ import {
   Archive,
   BrainCircuit,
   Check,
+  CheckCircle2,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
   Circle,
   Clock3,
   Download,
@@ -23,11 +26,14 @@ import {
   ShieldCheck,
   Sparkles,
   Search,
+  Wand2,
   X,
+  Zap,
 } from 'lucide-react'
 import { api } from './api'
 import { listAudioInputs, startAudioCapture, type AudioCapture } from './audio'
 import type {
+  AttachSeminarResponse,
   Health,
   IntakeParseResponse,
   ParsedSeminar,
@@ -105,6 +111,67 @@ function QuestionCard({ question, currentSessionId }: { question: QuestionState;
   )
 }
 
+function AttachInfoPanel({
+  busy,
+  onSubmit,
+}: {
+  busy: boolean
+  onSubmit: (text: string) => Promise<AttachSeminarResponse>
+}) {
+  const [text, setText] = useState('')
+  const [error, setError] = useState('')
+  const [result, setResult] = useState<AttachSeminarResponse | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const submit = async () => {
+    if (text.trim().length < 10) {
+      setError('请粘贴至少 10 个字的讲座通知或简介')
+      return
+    }
+    setError('')
+    setSubmitting(true)
+    try {
+      setResult(await onSubmit(text.trim()))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '补充信息失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (result) {
+    return (
+      <section className="attach-panel attach-done">
+        <strong><CheckCircle2 size={16} />已补充：{result.preset.speaker} · {result.preset.title}</strong>
+        <p>
+          生成 {result.questions.length} 个跟踪问题（{result.question_method === 'deepseek' ? 'DeepSeek 深度生成' : '关键词兜底'}），
+          回扫已有转录命中 {result.matched_questions} 个问题。
+        </p>
+      </section>
+    )
+  }
+  return (
+    <section className="attach-panel">
+      <strong><Sparkles size={16} />补充讲座信息</strong>
+      <p>粘贴讲座通知或简介，自动解析标题与演讲者、生成跟踪问题，并回扫已有转录补上错过的回答。</p>
+      <textarea
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="粘贴讲座通知、海报文字或简介……"
+        rows={5}
+        disabled={busy || submitting}
+      />
+      {error && <p className="inline-error"><AlertCircle size={15} />{error}</p>}
+      <div className="attach-actions">
+        <button className="primary-button" onClick={submit} disabled={busy || submitting}>
+          {submitting ? <Loader2 className="spin" size={16} /> : <Wand2 size={16} />}
+          解析并回扫
+        </button>
+      </div>
+    </section>
+  )
+}
+
 function SetupPanel({
   health,
   presets,
@@ -131,11 +198,12 @@ function SetupPanel({
   const [deviceError, setDeviceError] = useState('')
 
   useEffect(() => {
-    if (preferredPresetId && presets.some((item) => item.id === preferredPresetId)) {
+    const recordPresets = presets.filter((item) => item.id !== 'quick-record')
+    if (preferredPresetId && recordPresets.some((item) => item.id === preferredPresetId)) {
       setSelected(preferredPresetId)
       return
     }
-    if (!selected && presets[0]) setSelected(presets[0].id)
+    if (!selected && recordPresets[0]) setSelected(recordPresets[0].id)
   }, [presets, selected, preferredPresetId])
 
   const inspectMicrophones = async () => {
@@ -151,7 +219,8 @@ function SetupPanel({
     }
   }
 
-  const preset = presets.find((item) => item.id === selected)
+  const recordPresets = presets.filter((item) => item.id !== 'quick-record')
+  const preset = recordPresets.find((item) => item.id === selected)
 
   return (
     <main className="setup-shell">
@@ -181,6 +250,21 @@ function SetupPanel({
         </div>
       </header>
 
+      <section className="quick-record-banner">
+        <div className="quick-record-copy">
+          <strong><Zap size={16} />讲座已经开始、来不及建 Seminar？</strong>
+          <small>先把内容录下来最重要。速录会独立成项目，之后可在录音页或历史项目里粘贴通知文本，自动补齐信息并回扫错过的回答。</small>
+        </div>
+        <button
+          className="primary-button"
+          disabled={!consent || busy || health?.whisper_state !== 'ready'}
+          onClick={() => onStart('quick-record', externalAi, autoQuestions, deviceId, false)}
+        >
+          {busy ? <Loader2 className="spin" size={17} /> : <Zap size={17} />}
+          立即速录
+        </button>
+      </section>
+
       <section className="setup-grid">
         <div className="setup-form">
           <div className="section-title">
@@ -189,7 +273,7 @@ function SetupPanel({
           </div>
           <label className="field-label" htmlFor="preset">讲座预设</label>
           <select id="preset" value={selected} onChange={(event) => setSelected(event.target.value)}>
-            {presets.map((item) => <option value={item.id} key={item.id}>{item.speaker} · {item.title}</option>)}
+            {recordPresets.map((item) => <option value={item.id} key={item.id}>{item.speaker} · {item.title}</option>)}
           </select>
           {preset && (
             <div className="preset-summary">
@@ -287,6 +371,7 @@ function HistoryPanel({
   onContinue,
   onRejoin,
   onAddNote,
+  onAttach,
 }: {
   projects: ProjectSummary[]
   detail: ProjectDetail | null
@@ -295,6 +380,7 @@ function HistoryPanel({
   onSelect: (projectId: string) => Promise<void>
   onContinue: (projectId: string, externalAi: boolean, autoQuestions: boolean, deviceId: string) => Promise<void>
   onRejoin: (projectId: string, deviceId: string) => Promise<void>
+  onAttach: (projectId: string, text: string) => Promise<AttachSeminarResponse>
   onAddNote: (projectId: string, text: string, audioSecond?: number | null) => Promise<void>
 }) {
   const isLive = detail?.status === 'recording'
@@ -386,6 +472,10 @@ function HistoryPanel({
                   disabled={busy}
                 ><Mic size={16} />{isLive ? '回到录音' : '继续录音'}</button>
               </header>
+
+              {detail.preset_id === 'quick-record' && (
+                <AttachInfoPanel busy={busy} onSubmit={(text) => onAttach(detail.id, text)} />
+              )}
 
               {continueOpen && (
                 <section className="continue-panel">
@@ -497,6 +587,7 @@ function LiveWorkbench({
   onExport,
   onHistory,
   onAddNote,
+  onAttach,
   busy,
 }: {
   snapshot: SessionSnapshot
@@ -505,6 +596,7 @@ function LiveWorkbench({
   onExport: () => Promise<void>
   onHistory: () => Promise<void>
   onAddNote: (text: string, audioSecond: number) => Promise<void>
+  onAttach: (text: string) => Promise<AttachSeminarResponse>
   busy: boolean
 }) {
   const transcriptEnd = useRef<HTMLDivElement>(null)
@@ -517,6 +609,7 @@ function LiveWorkbench({
   const [noteText, setNoteText] = useState('')
   const [noteBusy, setNoteBusy] = useState(false)
   const [noteSaved, setNoteSaved] = useState('')
+  const [attachOpen, setAttachOpen] = useState(false)
   const counts = useMemo(() => {
     return snapshot.questions.reduce<Record<QuestionStatus, number>>(
       (result, question) => ({ ...result, [question.status]: result[question.status] + 1 }),
@@ -619,6 +712,17 @@ function LiveWorkbench({
           </>)}
         </div>
       </header>
+
+      {snapshot.preset.id === 'quick-record' && (
+        <section className="attach-banner">
+          <button className="attach-banner-toggle" onClick={() => setAttachOpen((open) => !open)} type="button">
+            <Zap size={15} />
+            <span>速录模式：尚未绑定讲座信息。点击补充，自动解析并回扫已录内容。</span>
+            {attachOpen ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </button>
+          {attachOpen && <AttachInfoPanel busy={busy} onSubmit={onAttach} />}
+        </section>
+      )}
 
       <section className="status-strip">
         <div><Clock3 size={16} /><span>录音</span><strong>{formatTime(snapshot.elapsed_seconds)}</strong></div>
@@ -1178,6 +1282,23 @@ export default function App() {
     await addProjectNote(snapshot.project_id, text, audioSecond)
   }
 
+  const attachSeminarInfo = async (projectId: string, text: string): Promise<AttachSeminarResponse> => {
+    setBusy(true)
+    setError('')
+    try {
+      const result = await api.attachProject(projectId, text)
+      setPresets(await api.presets())
+      if (screen === 'history') {
+        const [rows, refreshed] = await Promise.all([api.projects(), api.project(projectId)])
+        setProjects(rows)
+        setProjectDetail(refreshed)
+      }
+      return result
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!snapshot && screen === 'history') {
     return <><HistoryPanel
       projects={projects}
@@ -1188,6 +1309,7 @@ export default function App() {
       onContinue={continueProject}
       onRejoin={rejoinProject}
       onAddNote={addProjectNote}
+      onAttach={attachSeminarInfo}
     />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
   }
 
@@ -1206,5 +1328,5 @@ export default function App() {
     return <><SetupPanel health={health} presets={presets} preferredPresetId={preferredPresetId} onStart={start} onHistory={openHistory} onIntake={() => { setError(''); setScreen('intake') }} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
   }
 
-  return <><LiveWorkbench snapshot={snapshot} onStop={stop} onAnalyze={analyze} onExport={exportNotes} onHistory={openHistory} onAddNote={addLiveNote} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
+  return <><LiveWorkbench snapshot={snapshot} onStop={stop} onAnalyze={analyze} onExport={exportNotes} onHistory={openHistory} onAddNote={addLiveNote} onAttach={(text) => attachSeminarInfo(snapshot.project_id, text)} busy={busy} />{error && <div className="global-error"><AlertCircle size={17} />{error}</div>}</>
 }

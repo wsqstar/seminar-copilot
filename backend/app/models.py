@@ -229,3 +229,15 @@ class IntakeConfirmRequest(BaseModel):
 
 class IntakeConfirmResponse(BaseModel):
     preset_id: str
+
+
+class AttachSeminarRequest(BaseModel):
+    text: str = Field(min_length=10, max_length=20000)
+
+
+class AttachSeminarResponse(BaseModel):
+    preset_id: str
+    preset: SeminarPreset
+    questions: list[QuestionDefinition] = Field(default_factory=list)
+    question_method: Literal["deepseek", "none"] = "none"
+    matched_questions: int = 0

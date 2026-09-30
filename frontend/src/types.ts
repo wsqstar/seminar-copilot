@@ -195,3 +195,11 @@ export interface IntakeConfirmPayload {
   glossary: string[]
   questions: QuestionDefinition[]
 }
+
+export interface AttachSeminarResponse {
+  preset_id: string
+  preset: SeminarPreset
+  questions: QuestionDefinition[]
+  question_method: 'deepseek' | 'none'
+  matched_questions: number
+}

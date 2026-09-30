@@ -1,4 +1,4 @@
-import type { Health, IntakeConfirmPayload, IntakeParseResponse, ProjectDetail, ProjectNote, ProjectSummary, SeminarPreset, SessionSnapshot } from './types'
+import type { AttachSeminarResponse, Health, IntakeConfirmPayload, IntakeParseResponse, ProjectDetail, ProjectNote, ProjectSummary, SeminarPreset, SessionSnapshot } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -56,6 +56,11 @@ export const api = {
         auto_questions_enabled: autoQuestionsEnabled,
         recording_permission_confirmed: true,
       }),
+    }),
+  attachProject: (projectId: string, text: string) =>
+    request<AttachSeminarResponse>(`/api/projects/${projectId}/attach`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
     }),
   addProjectNote: (projectId: string, text: string, audioSecond?: number | null) =>
     request<ProjectNote>(`/api/projects/${projectId}/notes`, {

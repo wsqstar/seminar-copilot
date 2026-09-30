@@ -24,6 +24,7 @@ from .models import (
     SessionSnapshot,
     TranscriptSegment,
 )
+from .presets import QUICK_RECORD_PRESET_ID
 from .recovery import (
     RecoverySource,
     build_recovered_states,
@@ -57,7 +58,13 @@ class SeminarSession:
         stamp = self.started_at.strftime("%Y%m%d-%H%M%S")
         self.id = f"{preset.id}-{stamp}-{uuid.uuid4().hex[:6]}"
         self.preset = preset
-        self.project_id = project_id or preset.id
+        if project_id is not None:
+            self.project_id = project_id
+        elif preset.id == QUICK_RECORD_PRESET_ID:
+            # 速录录音各自成独立项目，事后可补充讲座信息
+            self.project_id = self.id
+        else:
+            self.project_id = preset.id
         self.root = root / self.id
         self.root.mkdir(parents=True, exist_ok=False)
         self.transcriber = transcriber
@@ -246,6 +253,62 @@ class SeminarSession:
             if state.status == "unanswered":
                 state.status = "mention"
                 state.confidence = evidence.confidence
+
+    def attach_seminar_info(self, preset: SeminarPreset) -> int:
+        """为速录会话补充讲座信息：换预设、追加问题、回扫已有转录。
+
+        返回在既有转录中命中关键词的问题数。
+        """
+        self.preset = preset
+        existing_ids = {state.id for state in self.questions}
+        new_ids: set[str] = set()
+        for definition in preset.questions:
+            if definition.id in existing_ids:
+                continue
+            new_ids.add(definition.id)
+            self.questions.append(
+                QuestionState(
+                    id=definition.id,
+                    question=definition.question,
+                    why_it_matters=definition.why_it_matters,
+                    expected_slots=definition.expected_slots,
+                    keywords=definition.keywords,
+                    missing=list(definition.expected_slots),
+                )
+            )
+        for segment in self.transcript:
+            self._apply_local_matches(segment)
+        updates: list[dict[str, Any]] = []
+        matched = 0
+        for state in self.questions:
+            if state.id not in new_ids:
+                continue
+            if state.evidence:
+                matched += 1
+            for evidence in state.evidence:
+                updates.append(
+                    {
+                        "question_id": state.id,
+                        "status": "mention",
+                        "evidence_quote": evidence.quote,
+                        "answer": "",
+                        "missing": list(state.missing),
+                        "confidence": evidence.confidence,
+                    }
+                )
+        if updates:
+            self._append_jsonl(
+                self._analysis_path,
+                {
+                    "at_audio_second": self.elapsed_seconds,
+                    "window_start": 0.0,
+                    "updates": updates,
+                    "followups": [],
+                    "source": "attach-seminar-info",
+                },
+            )
+        self._write_manifest()
+        return matched
 
     async def deep_analyze(self) -> None:
         if self._ai_busy or not self.external_ai_enabled or not self.transcript:
@@ -778,9 +841,18 @@ class SessionManager:
         preset = self.presets.get(preset_id)
         if preset is None:
             raise KeyError(preset_id)
-        self._ensure_no_active_project(preset_id)
-        now = datetime.now()
-        recovered_sources = find_recovery_sources(self.root, preset_id, now)
+        if preset_id == QUICK_RECORD_PRESET_ID:
+            # 速录：复制占位预设避免改动共享对象；不做崩溃恢复串接，
+            # 每场速录独立成项目，事后通过 attach 补充讲座信息。
+            preset = preset.model_copy(deep=True)
+            preset.date = datetime.now().date().isoformat()
+            project_id: str | None = None
+            recovered_sources: list[RecoverySource] = []
+        else:
+            self._ensure_no_active_project(preset_id)
+            now = datetime.now()
+            recovered_sources = find_recovery_sources(self.root, preset_id, now)
+            project_id = preset_id
         session = SeminarSession(
             preset=preset,
             root=self.root,
@@ -789,7 +861,7 @@ class SessionManager:
             external_ai_enabled=external_ai_enabled,
             auto_questions_enabled=auto_questions_enabled,
             recovered_sources=recovered_sources,
-            project_id=preset_id,
+            project_id=project_id,
         )
         self.sessions[session.id] = session
         session.start_background_loop()

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import struct
 from contextlib import asynccontextmanager
+from datetime import date as date_type
 from pathlib import Path
 from typing import Iterator
 
@@ -12,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .models import (
+    AttachSeminarRequest,
+    AttachSeminarResponse,
     ContinueProjectRequest,
     ExportResponse,
     IntakeConfirmRequest,
@@ -22,14 +26,23 @@ from .models import (
     ProjectNote,
     ProjectNoteRequest,
     ProjectSummary,
+    QuestionDefinition,
     SeminarPreset,
     SessionSnapshot,
     StartSessionRequest,
     TemporaryQuestionRequest,
 )
 from . import intake
-from .presets import CONFIG_DIR, load_presets, reload_presets
-from .projects import ProjectStore
+from .analyzer import keyword_hits
+from .intake import (
+    _clean_glossary,
+    assess_relevance,
+    parse_announcement,
+    propose_questions,
+    validate_preset_id,
+)
+from .presets import CONFIG_DIR, QUICK_RECORD_PRESET_ID, load_presets, reload_presets
+from .projects import ProjectStore, _read_jsonl
 from .session import SessionManager
 
 
@@ -237,6 +250,145 @@ def get_project_audio(
         media_type="audio/wav",
         status_code=206 if partial else 200,
         headers=headers,
+    )
+
+
+def _append_jsonl(path: Path, payload: dict) -> None:
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def _retro_keyword_updates(
+    questions: list[QuestionDefinition],
+    transcript_rows: list[dict],
+    max_per_question: int = 3,
+) -> list[dict]:
+    """对已结束的会话做关键词回扫，产出可回放的 analysis 更新。"""
+    updates: list[dict] = []
+    for definition in questions:
+        hits_used = 0
+        for row in transcript_rows:
+            text = str(row.get("text") or "").strip()
+            if not text:
+                continue
+            hits = keyword_hits(definition, text)
+            if not hits:
+                continue
+            updates.append(
+                {
+                    "question_id": definition.id,
+                    "status": "mention",
+                    "evidence_quote": text,
+                    "answer": "",
+                    "missing": list(definition.expected_slots),
+                    "confidence": min(0.65, 0.3 + 0.1 * len(hits)),
+                }
+            )
+            hits_used += 1
+            if hits_used >= max_per_question:
+                break
+    return updates
+
+
+@app.post("/api/projects/{project_id}/attach", response_model=AttachSeminarResponse)
+async def attach_seminar_info(
+    project_id: str, request: AttachSeminarRequest
+) -> AttachSeminarResponse:
+    """为速录项目补充讲座信息：解析通知文本、生成预设与问题并回扫录音。"""
+    # 录音中的会话可能尚未落盘，存在性以内存会话与磁盘项目任一为准
+    live_sessions = [
+        session
+        for session in manager.sessions.values()
+        if session.project_id == project_id and session.status in {"recording", "stopping"}
+    ]
+    detail = None
+    try:
+        detail = project_store().get_project(project_id)
+    except KeyError:
+        if not live_sessions:
+            raise HTTPException(404, "项目不存在") from None
+    if detail is not None and detail.preset_id != QUICK_RECORD_PRESET_ID:
+        raise HTTPException(400, "该项目已绑定讲座信息，仅速录项目可补充")
+    if any(session.preset.id != QUICK_RECORD_PRESET_ID for session in live_sessions):
+        raise HTTPException(400, "该项目已绑定讲座信息，仅速录项目可补充")
+    if not validate_preset_id(project_id):
+        raise HTTPException(400, "项目 id 无法作为预设 id")
+
+    parsed = await parse_announcement(request.text)
+    relevance = await assess_relevance(parsed)
+    questions = await propose_questions(parsed, relevance, [])
+    preset = SeminarPreset(
+        id=project_id,
+        title=parsed.title or "未命名讲座",
+        speaker=parsed.speaker or "未知演讲者",
+        date=parsed.date or date_type.today().isoformat(),
+        source_path=f"config/seminars/{project_id}.json",
+        glossary=_clean_glossary(
+            [
+                *parsed.topic_keywords,
+                *(keyword for question in questions for keyword in question.keywords),
+            ]
+        ),
+        language="auto",
+        questions=questions,
+    )
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    (CONFIG_DIR / f"{project_id}.json").write_text(
+        json.dumps(preset.model_dump(), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    presets[project_id] = preset
+
+    matched_ids: set[str] = set()
+    live_ids: set[str] = set()
+    for session in live_sessions:
+        live_ids.add(session.id)
+        session.attach_seminar_info(preset)
+        for state in session.questions:
+            if state.evidence:
+                matched_ids.add(state.id)
+        await session.broadcast()
+
+    # 已落盘的会话：改写 manifest 并追加合成分析行（引用为原句，可过 grounded 校验）
+    for session_dir in sorted(manager.root.iterdir()):
+        if not session_dir.is_dir() or session_dir.name in live_ids:
+            continue
+        manifest_path = session_dir / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if manifest.get("project_id") != project_id:
+            continue
+        transcript_rows = _read_jsonl(session_dir / "transcript.jsonl")
+        updates = _retro_keyword_updates(questions, transcript_rows)
+        if updates:
+            _append_jsonl(
+                session_dir / "analysis.jsonl",
+                {
+                    "at_audio_second": manifest.get("audio_seconds", 0.0),
+                    "window_start": 0.0,
+                    "updates": updates,
+                    "followups": [],
+                    "source": "attach-seminar-info",
+                },
+            )
+            matched_ids.update(str(item["question_id"]) for item in updates)
+        manifest["preset_id"] = project_id
+        manifest["language"] = preset.language
+        manifest["source_path"] = preset.source_path
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+    return AttachSeminarResponse(
+        preset_id=project_id,
+        preset=preset,
+        questions=questions,
+        question_method="deepseek" if questions else "none",
+        matched_questions=len(matched_ids),
     )
 
 

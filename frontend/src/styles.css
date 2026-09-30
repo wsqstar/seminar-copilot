@@ -445,3 +445,112 @@ blockquote span { font-size: 11px; line-height: 1.5; }
     grid-template-columns: 1fr;
   }
 }
+
+/* 速录（先录音后补信息） */
+.quick-record-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 22px;
+  padding: 14px 18px;
+  background: var(--amber-soft);
+  border: 1px solid #e2cfa5;
+  border-radius: 6px;
+}
+
+.quick-record-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quick-record-copy strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--amber);
+}
+
+.quick-record-copy small {
+  color: #6d5b33;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.quick-record-banner .primary-button { flex: 0 0 auto; }
+
+.attach-banner {
+  margin: 14px 0 0;
+  border: 1px solid #e2cfa5;
+  border-radius: 6px;
+  background: var(--amber-soft);
+  overflow: hidden;
+}
+
+.attach-banner-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--amber);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.attach-banner-toggle span { flex: 1; }
+
+.attach-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--amber);
+  border-radius: 6px;
+}
+
+.attach-panel > strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--amber);
+}
+
+.attach-panel > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.attach-panel textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #c9d1cb;
+  border-radius: 5px;
+  background: white;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.attach-actions { display: flex; justify-content: flex-end; }
+
+.attach-done { border-left-color: var(--green); }
+
+.attach-done > strong { color: var(--green); }
+
+@media (max-width: 720px) {
+  .quick-record-banner { flex-direction: column; align-items: stretch; }
+}
