@@ -33,6 +33,15 @@ and exports an evidence-linked Markdown note.
   speaker and topic, proposes reviewable questions, then writes a preset JSON,
   a dossier under `data/dossiers/<preset_id>/`, and reloads presets without a
   restart. Nothing is written until the user confirms the review screen.
+- Whisper language is per-preset (`language`, default `"auto"` = whisper
+  detects each window; pin e.g. `"en"`/`"zh"` if needed), overridable via
+  `SEMINAR_WHISPER_LANGUAGE`. Keep preset glossaries to real domain terms:
+  junk notice-title tokens in the initial prompt cause hallucination loops.
+- Auto-generated follow-up questions are behind the explicit
+  `auto_questions_enabled` switch (start/continue panels); suggestions appear
+  in the follow-up bar and can be clicked to adopt as tracked questions. The
+  backend must run outside the workspace file sandbox (dsh headless writes
+  ~/.dsh) or AI ticks fail with EPERM.
 
 ## Deferred
 
