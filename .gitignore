@@ -15,5 +15,8 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 data/
 artifacts/
+# Intake 生成的个人 seminar 预设是机器本地内容；仅保留示例 bio.json
+backend/config/seminars/*.json
+!backend/config/seminars/bio.json
 test-exports/
 *.log

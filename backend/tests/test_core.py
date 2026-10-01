@@ -23,12 +23,14 @@ from app.session import (
 from app.research import bibliographic_relevance, search_transcript
 
 
-def test_preset_is_loadable_and_has_question_slots() -> None:
+def test_presets_are_loadable_and_well_formed() -> None:
     presets = load_presets()
-    preset = presets["jiaxin-shi-2026-09-09"]
-    assert len(preset.questions) == 6
-    assert all(question.keywords for question in preset.questions)
-    assert all(question.expected_slots for question in preset.questions)
+    assert presets
+    for preset in presets.values():
+        assert preset.id
+        for question in preset.questions:
+            assert question.id
+            assert question.question
 
 
 def test_keyword_match_is_case_insensitive() -> None:
@@ -51,10 +53,10 @@ def test_quote_grounding_requires_exact_normalized_span() -> None:
 
 def test_format_helpers() -> None:
     assert format_seconds(125.8) == "02:05"
-    assert slugify("Jiaxin Shi") == "jiaxin-shi"
+    assert slugify("Jane Doe") == "jane-doe"
     assert export_filename(
-        "2026-09-09", "Jiaxin Shi", datetime(2026, 9, 9, 14, 30, 12)
-    ) == "2026-09-09-jiaxin-shi-143012-seminar-live-notes.md"
+        "2026-09-09", "Jane Doe", datetime(2026, 9, 9, 14, 30, 12)
+    ) == "2026-09-09-jane-doe-143012-seminar-live-notes.md"
 
 
 def test_audio_byte_ranges_support_seeking() -> None:
@@ -65,10 +67,11 @@ def test_audio_byte_ranges_support_seeking() -> None:
 
 
 def test_preset_json_contains_no_api_credentials() -> None:
-    config = Path(__file__).resolve().parents[1] / "config" / "seminars" / "jiaxin-shi-2026-09-09.json"
-    text = config.read_text(encoding="utf-8").lower()
-    assert "api_key" not in text
-    json.loads(text)
+    config_dir = Path(__file__).resolve().parents[1] / "config" / "seminars"
+    for path in sorted(config_dir.glob("*.json")):
+        text = path.read_text(encoding="utf-8").lower()
+        assert "api_key" not in text
+        json.loads(text)
 
 
 def test_recent_orphan_sessions_form_a_recovery_chain(tmp_path: Path) -> None:
