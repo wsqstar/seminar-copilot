@@ -1,0 +1,32 @@
+{
+  "id": "example",
+  "title": "【示例】城市时空数据分析入门——从轨迹数据到出行模式（虚构示例，请替换为真实讲座）",
+  "speaker": "Jane Doe",
+  "date": "2026-01-01",
+  "source_path": null,
+  "language": "auto",
+  "glossary": [
+    "spatiotemporal data",
+    "trajectory mining",
+    "mobility pattern",
+    "stay point detection",
+    "origin-destination matrix"
+  ],
+  "questions": [
+    {
+      "id": "q1-example",
+      "question": "示例问题：轨迹数据在去标识化之后，如何评估重识别风险？",
+      "why_it_matters": "示例：判断数据发布方案的隐私边界是否可信。",
+      "keywords": [
+        "re-identification",
+        "de-identification",
+        "privacy"
+      ],
+      "expected_slots": [
+        "评估指标或攻击模型",
+        "实验数据规模",
+        "结论的适用边界"
+      ]
+    }
+  ]
+}
